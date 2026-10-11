@@ -4,6 +4,8 @@ Research date: **October 10, 2026**. Sources: Braintrust's public documentation,
 
 **Documented** means supported by a linked primary source. **Design recommendation** means a proposed MindTrust behavior; it is not a claim about Braintrust or a statement that MindTrust already implements it. Check the repository README and tests for the delivered implementation's current scope.
 
+For the official setup wizard's local changes, authentication, telemetry, and a proposed isolated comparison workflow, see [Braintrust onboarding](braintrust-onboarding.md).
+
 ## 1. What has to be replaced
 
 Braintrust connects instrumenting applications, investigating production behavior, collecting human feedback, constructing datasets, evaluating changes, and monitoring deployments. The product's value comes from moving the same examples and evidence through this cycle. A collection of visually similar pages would not replace that workflow. [Product documentation](https://www.braintrust.dev/docs), [workflow](https://www.braintrust.dev/docs/workflow).
