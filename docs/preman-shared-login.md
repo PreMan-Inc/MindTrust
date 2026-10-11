@@ -32,10 +32,22 @@ Back up and verify the database before deploying schema 4. Older Verus binaries 
 
 ## Explicitly attach existing data
 
-Only an operator can associate the legacy workspace with a verified PreMan workspace. Do this before that PreMan workspace's first Verus sign-in. Obtain a fresh launch code/PKCE verifier for a verified PreMan owner/admin and save exactly `{code, code_verifier}` in a private regular file (mode 0600). Stop the Verus writer, verify its backup, then run:
+Only an operator can associate the legacy workspace with a verified PreMan workspace. Before that PreMan workspace's first Verus sign-in, obtain a fresh launch code/PKCE verifier for a verified PreMan owner/admin and save exactly `{code, code_verifier}` in a private regular file (mode 0600). Stop the Verus writer, verify its backup, then run:
 
 ```sh
 node --import tsx scripts/bind-preman-workspace.ts /absolute/path/mindtrust.sqlite /private/path/launch-proof.json
 ```
 
-The command redeems the proof through the fixed trusted server, acquires the exclusive database lock, binds the legacy workspace, and appends `workspace.bind.preman` to its audit history. It never merges identities by email or changes project IDs and API keys. It refuses rebinding and refuses an already-provisioned target workspace; that situation requires a separately reviewed data migration. Remove the expired proof file using normal secret-handling procedures and restart the service. This command is supplied for review; creating it does not execute a live migration.
+The command redeems the proof through the fixed trusted server, acquires the exclusive database lock, binds the legacy workspace, and appends `workspace.bind.preman` to its audit history. It never merges identities by email or changes project IDs and API keys. This proof-file mode refuses rebinding and already-provisioned target workspaces. Remove the expired proof file using normal secret-handling procedures and restart the service.
+
+If the first shared sign-in has already created an **empty** workspace, the operator can instead bind that shell using the verified session stored by Verus. This avoids reading any PreMan JWT, browser cookie, or PKCE verifier. Confirm that the user has authorized attaching the existing data to that exact workspace, verify a backup, and let an owner/admin complete a fresh shared sign-in or renewal. Inspect the trusted server's `workspaces` row and its `auth_external_identities`/`auth_sessions` records to confirm the immutable issuer, tenant ID and subject. Do not infer authority from an email address or workspace name. Stop the writer and, before the five-minute session deadline, run:
+
+```sh
+node --import tsx scripts/bind-preman-workspace.ts /absolute/path/mindtrust.sqlite --existing-workspace INTERNAL_WORKSPACE_UUID
+```
+
+`INTERNAL_WORKSPACE_UUID` is the exact Verus `workspaces.id`, not the PreMan tenant UUID. This offline mode requires schema 4 and the exclusive writer lock. It checks a live, unrevoked `auth_method=preman` session with the exact stored issuer/subject/tenant relationship, an enabled passwordless PreMan user and current enabled administrator membership, a deadline no more than five minutes away, and a successful server-recorded PreMan login audit within five minutes. A session's original creation time may be older because verified renewal preserves its cookie. These are the last verified upstream permissions; this offline operation does not add a fresh network membership lookup.
+
+The target must have no projects or API keys, including revoked keys; all its memberships and sessions must belong to valid PreMan identities. Local identities, conflicting legacy memberships, data-bearing audit references, unknown workspace-reference tables, unexpected workspace or identity foreign keys, triggers, invalid foreign keys and an already-bound legacy workspace cause refusal. An expired, revoked, member-only or incorrectly bound session cannot authorize the operation. Targets containing any work require a separately reviewed data migration.
+
+The transaction keeps the `legacy` workspace ID and every existing project, credential, local user and session unchanged. It moves the empty shell's validated PreMan memberships, sessions and audit records to `legacy`, transfers the exact tenant binding, removes the empty shell, and records `workspace.bind.preman.existing`. Failure rolls back the whole operation. Restart the service and refresh Verus to load the attached evaluations; existing local recovery and API credentials retain their scopes. Creating this command does not execute a live migration.

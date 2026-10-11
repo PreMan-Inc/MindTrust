@@ -1,4 +1,5 @@
-# One isolated customer workspace per stack/VM. Never share its volume or secret.
+# One SQLite writer per stack/VM, with PreMan workspace isolation in the application.
+# Keep this deployment's volume and recovery secret private to its operator.
 services:
   proxy:
     image: caddy:2.11.7-alpine
