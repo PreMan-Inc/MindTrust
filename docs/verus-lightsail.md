@@ -81,7 +81,7 @@ The Dockerfile's `node` user is UID/GID 1000. Install Docker Engine and its Comp
 
 Build a source archive from the exact reviewed Git commit (`git archive --format=tar COMMIT | gzip -n`), record its SHA-256, upload it into CloudShell, and transfer it with the same verified SSH identity. Verify the checksum on the VM before extraction. The archive must exclude local databases, credentials, `.env`, and evaluation artifacts; do not upload the entire working directory or install GitHub credentials on the host.
 
-Extract into a new root-owned `/opt/verus/releases/COMMIT` directory and point `/opt/verus/current` to that release. Keep the previous release/image for rollback. From that release:
+Extract into a new root-owned `/opt/verus/releases/COMMIT` directory. On first deployment, point `/opt/verus/current` to that release. For an existing deployment, complete the image-preservation and backup steps below **before building or switching releases**. From the selected release:
 
 ```sh
 sudo install -m 0755 deploy/verus-require-data-disk.sh /usr/local/sbin/verus-require-data-disk
@@ -96,7 +96,7 @@ sudo systemctl restart docker
 
 The guard requires the recorded UUID, ext4, an actual filesystem mount, and a root-owned UUID file. `RequiresMountsFor` orders Docker after the mount; `BindsTo` stops Docker when the mount unit goes away. The guard is deliberately on **Docker itself**, since its persisted `restart: unless-stopped` containers can start without a separate app unit. Apply this only to the dedicated Verus VM. The Compose override uses `create_host_path: false`; it cannot silently create missing data directories on the root disk. Do not bypass the guard or run Docker manually when it fails.
 
-Create `/srv/verus-data/private/workspace.env` once with root ownership and mode 0600. Set `DOMAIN=verus.preman.live`, `ACME_EMAIL` to the actual certificate contact, and `MINDTRUST_ADMIN_TOKEN` to a cryptographically random 64-character hex value generated on the VM. Generate and write the token within a program/file redirection so it never appears in terminal output or command arguments. Preserve an existing secret on resume. No provider credential is needed on this server for the local PreMan evaluation runner.
+Create `/srv/verus-data/private/workspace.env` once with root ownership and mode 0600. Set `DOMAIN=verus.preman.live`, `ACME_EMAIL` to the actual certificate contact, and `MINDTRUST_ADMIN_TOKEN` to a cryptographically random 64-character hex value generated on the VM. Generate and write the token within a program/file redirection so it never appears in terminal output or command arguments. Preserve an existing secret on resume. Set `MINDTRUST_IMAGE=verus-mindtrust:COMMIT` using the release's exact Git commit; never build another image into that tag. No provider credential is needed on this server for the local PreMan evaluation runner.
 
 In a root shell with tracing disabled, use the same project name and both Compose files on every operation:
 
@@ -104,13 +104,44 @@ In a root shell with tracing disabled, use the same project name and both Compos
 cd /opt/verus/current
 verus_compose=(docker compose --project-name verus --env-file /srv/verus-data/private/workspace.env -f deploy/compose.production.yaml -f deploy/compose.lightsail.yaml)
 "${verus_compose[@]}" config --quiet
-"${verus_compose[@]}" up --build -d
+"${verus_compose[@]}" build mindtrust
+"${verus_compose[@]}" up --no-build -d
 "${verus_compose[@]}" ps
 ```
 
 Never print plain `docker compose config` or full `docker inspect`: both can reveal environment secrets. The base stack remains unchanged; the override replaces only `/app/data`, Caddy `/data`, and Caddy `/config` with directories on the encrypted disk. It preserves the exact proxy IP trust, private application port, readiness dependency, and production authentication.
 
 Add a Squarespace A record for host `verus` to the dedicated static IPv4 address. Preserve every existing record, especially the root and `api` records. Only add AAAA if IPv6 has also been explicitly configured and tested. Caddy obtains/renews TLS after DNS reaches this VM and ports 80/443 are reachable. Then run the [public acceptance checks and PreMan evaluation procedure](verus-hosting.md). Verify the app survives a controlled VM reboot with the same database before considering persistence tested.
+
+### Upgrading an existing release
+
+1. Before **any build**, record the current source commit/archive checksum and inspect only the running container's `.Image` and `.Config.Image`. Preserve its image under a unique release tag. For an older deployment using an implicit or `latest` tag, use the following in a root Bash shell, replacing `OLD_COMMIT` with the recorded release commit:
+
+   ```sh
+   set +x
+   set -euo pipefail
+   mapfile -t verus_containers < <(docker ps --filter label=com.docker.compose.project=verus --filter label=com.docker.compose.service=mindtrust --filter status=running --format '{{.ID}}')
+   test "${#verus_containers[@]}" -eq 1
+   verus_old_id=$(docker inspect --format '{{.Image}}' "${verus_containers[0]}")
+   verus_old_ref=$(docker inspect --format '{{.Config.Image}}' "${verus_containers[0]}")
+   test "$(docker image inspect --format '{{.Id}}' "$verus_old_ref")" = "$verus_old_id"
+   verus_previous_image=verus-mindtrust:OLD_COMMIT
+   if docker image inspect "$verus_previous_image" >/dev/null 2>&1; then
+     test "$(docker image inspect --format '{{.Id}}' "$verus_previous_image")" = "$verus_old_id"
+   else
+     docker image tag "$verus_old_ref" "$verus_previous_image"
+   fi
+   test "$(docker image inspect --format '{{.Id}}' "$verus_previous_image")" = "$verus_old_id"
+   ```
+
+   Stop on any failure. A running container alone does not prove a separate backup helper can launch from its image. If the tag is missing or has moved, recover the preserved image before proceeding; rebuilding the same source does not recreate an identical image.
+
+2. Run `systemctl start verus-backup.service` and confirm success plus a newly verified backup/manifest in `latest-verified`. Rehearse the new version on a restored copy before upgrading the live database. Keep this pre-upgrade backup paired with the old release image.
+3. Extract the reviewed new release and install its backup helper. Update only `MINDTRUST_IMAGE` in the private environment file to a **new, unused** `verus-mindtrust:NEW_COMMIT` tag, preserving secrets. Do not reuse an existing tag or run broad image pruning. Switch `/opt/verus/current`, rebuild the Compose array from that directory, validate with `config --quiet`, then run `build mindtrust` followed by `up --no-build -d` as above.
+4. Verify health, sign-in, existing data, and the hosted acceptance checks. Run the backup service again and verify its new manifest and `latest-verified` entry. This confirms the new release can also launch the isolated backup helper; an application health check alone is insufficient.
+5. Retain the old source, image tag/ID, and matching pre-upgrade backup until the rollback window closes. Schema rollback requires restoring that backup into a new volume and testing it with the old image; do not simply start old code against the upgraded live database.
+
+An unset `MINDTRUST_IMAGE` retains the existing Compose project/service image name for compatibility. Production releases must set the unique tag explicitly and preserve it across every Compose invocation.
 
 ## 5. Back up first, then take scheduled snapshots
 
@@ -123,7 +154,7 @@ sudo systemctl enable --now verus-backup.timer
 sudo systemctl list-timers verus-backup.timer --no-pager
 ```
 
-The host makes a consistent online SQLite backup at **03:00 UTC**, verifies its manifest/checksum/integrity, and flushes the filesystem. A separate container uses the running release image, no network, no application secrets, a read-only source mount, and the encrypted disk's backup directory. `/srv/verus-data/backups/latest-verified` identifies the last completed backup. Source database contents are never copied directly while live.
+The host makes a consistent online SQLite backup at **03:00 UTC**, verifies its manifest/checksum/integrity, and flushes the filesystem. A separate container uses the running container's original image reference only after its local image ID matches the container's recorded image ID. Missing or retagged images stop the backup; it never pulls an image or falls back to another release. The helper has no network or application secrets, a read-only source mount, and the encrypted disk's backup directory. `/srv/verus-data/backups/latest-verified` identifies the last completed backup. Source database contents are never copied directly while live.
 
 After the first verified backup, enable instance automatic snapshots from CloudShell at **04:00 UTC**:
 
