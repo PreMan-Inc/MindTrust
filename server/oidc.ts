@@ -222,8 +222,9 @@ export function mountOidc(
         if (claims.email_verified !== true || typeof claims.email !== 'string')
           throw new Error('A verified preprovisioned email is required');
         const email = z.string().trim().toLowerCase().email().max(254).parse(claims.email);
-        user = store.db.prepare('SELECT * FROM auth_users WHERE email=?').get(email) as unknown as
-          OidcUser | undefined;
+        user = store.db
+          .prepare("SELECT * FROM auth_users WHERE email=? AND identity_source='local'")
+          .get(email) as unknown as OidcUser | undefined;
         if (!user || user.disabled || !user.allow_oidc || user.oidc_issuer || user.oidc_subject)
           throw new Error('This identity is not provisioned for SSO');
         const bound = store.db
@@ -234,7 +235,7 @@ export function mountOidc(
         if (bound.changes !== 1) throw new Error('SSO binding changed during authentication');
       }
       if (user.disabled || !user.allow_oidc) throw new Error('SSO is disabled for this account');
-      access.startUserSession(req, res, user.id);
+      access.startUserSession(req, res, user.id, { authMethod: 'oidc' });
       access.audit(req, 'auth.oidc.login', 200);
       res.redirect(302, '/');
     } catch {

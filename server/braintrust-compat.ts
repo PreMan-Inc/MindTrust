@@ -12,7 +12,7 @@ import type {
   Trace,
 } from '../shared/types.ts';
 import { aggregateExperiment, stableJson } from './evaluation.ts';
-import { HttpError, Store } from './store.ts';
+import { HttpError, LEGACY_WORKSPACE_ID, Store } from './store.ts';
 import { writeTrace } from './traces.ts';
 
 /** A deliberately bounded wire adapter, contract-tested against braintrust@3.37.2. */
@@ -21,6 +21,8 @@ export interface BraintrustAccess {
   requireProject(req: Request, projectId: string, permission: 'read' | 'write'): void;
   requireAdmin(req: Request): void;
   listProjects(req: Request): Project[];
+  workspaceId(req: Request): string;
+  createProject(req: Request, project: Project): Project;
 }
 type Row = Record<string, Json>;
 type ObjectType = 'project_logs' | 'dataset' | 'experiment';
@@ -174,6 +176,14 @@ function assertRow(row: Row) {
 }
 
 export function mountBraintrustCompatibility(app: Express, store: Store, access: BraintrustAccess) {
+  function organization(workspaceId: string) {
+    if (workspaceId === LEGACY_WORKSPACE_ID) return { id: ORG_ID, name: 'MindTrust' };
+    const workspace = store.db
+      .prepare('SELECT id,name FROM workspaces WHERE id=?')
+      .get(workspaceId) as { id: string; name: string } | undefined;
+    if (!workspace) throw new HttpError(403, 'Unknown organization');
+    return workspace;
+  }
   // Python 0.45 sends JSON bytes without a Content-Type on this legacy endpoint.
   app.use(
     '/logs3',
@@ -249,7 +259,7 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
   const projectInfo = (p: Project) => ({
     id: p.id,
     name: p.name,
-    org_id: ORG_ID,
+    org_id: organization(store.projectWorkspace(p.id)!).id,
     description: p.description,
     created: p.createdAt,
   });
@@ -276,9 +286,10 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
     permission: 'read' | 'write',
     createIfMissing = false,
   ): Project {
-    if (body.org_id !== undefined && body.org_id !== ORG_ID)
+    const org = organization(access.workspaceId(req));
+    if (body.org_id !== undefined && body.org_id !== org.id)
       throw new HttpError(403, 'Unknown organization');
-    if (body.org_name !== undefined && body.org_name !== 'MindTrust')
+    if (body.org_name !== undefined && body.org_name !== org.name)
       throw new HttpError(403, 'Unknown organization');
     if (body.project_id !== undefined) {
       const p = store.project(str(body.project_id, 'project_id'));
@@ -288,7 +299,9 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
       return p;
     }
     const name = str(body.project_name, 'project_name');
-    const matches = store.list<Project>('project').filter((p) => p.name === name);
+    const matches = store
+      .list<Project>('project')
+      .filter((p) => store.projectWorkspace(p.id) === access.workspaceId(req) && p.name === name);
     if (matches.length > 1) throw new HttpError(409, 'Ambiguous project name; use project_id');
     if (matches[0]) {
       access.requireProject(req, matches[0].id, permission);
@@ -297,7 +310,7 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
     if (permission === 'read' && !createIfMissing) throw new HttpError(404, 'Project not found');
     access.requireAdmin(req);
     const p: Project = { id: randomUUID(), name, description: '', createdAt: now() };
-    store.put('project', p, p.id);
+    access.createProject(req, p);
     return p;
   }
   function nativeRow(r: Row): DatasetRow {
@@ -735,7 +748,11 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
     const base = process.env.MINDTRUST_PUBLIC_URL ?? `${req.protocol}://${req.get('host')}`;
     res.json({
       org_info: [
-        { id: ORG_ID, name: 'MindTrust', api_url: base, git_metadata: { collect: 'none' } },
+        {
+          ...organization(access.workspaceId(req)),
+          api_url: base,
+          git_metadata: { collect: 'none' },
+        },
       ],
     });
   });
@@ -817,7 +834,7 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
           object_type: 'dataset',
           object_id: d.id,
           object_name: d.name,
-          org_id: ORG_ID,
+          org_id: organization(access.workspaceId(req)).id,
           parent_cols: { project: projectInfo(store.project(d.projectId)) },
         };
       }),
@@ -1315,7 +1332,10 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
   route('get', '/v1/project', (req, res) => {
     if (Object.keys(req.query).some((key) => !['project_name', 'org_name'].includes(key)))
       unsupported('project discovery filters');
-    if (req.query.org_name !== undefined && req.query.org_name !== 'MindTrust')
+    if (
+      req.query.org_name !== undefined &&
+      req.query.org_name !== organization(access.workspaceId(req)).name
+    )
       throw new HttpError(403, 'Unknown organization');
     res.json({
       objects: access
@@ -1404,7 +1424,10 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
       )
     )
       unsupported('experiment discovery filters');
-    if (req.query.org_name !== undefined && req.query.org_name !== 'MindTrust')
+    if (
+      req.query.org_name !== undefined &&
+      req.query.org_name !== organization(access.workspaceId(req)).name
+    )
       throw new HttpError(403, 'Unknown organization');
     const projects = new Set(access.listProjects(req).map((p) => p.id));
     if (req.query.project_id !== undefined)

@@ -43,6 +43,10 @@ try {
     adminToken: token,
     production,
     oidc,
+    preman:
+      process.env.MINDTRUST_PREMAN_ENABLED === 'true'
+        ? { issuer: process.env.MINDTRUST_PREMAN_ISSUER }
+        : undefined,
     trustedProxies: (process.env.MINDTRUST_TRUSTED_PROXIES ?? '')
       .split(',')
       .map((s) => s.trim())

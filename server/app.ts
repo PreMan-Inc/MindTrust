@@ -31,6 +31,7 @@ import { seedDemo } from './seed-data.ts';
 import { HttpError, Store } from './store.ts';
 import { AccessController } from './auth.ts';
 import { mountOidc, type OidcOptions } from './oidc.ts';
+import { mountPreman, PREMAN_WEB_ORIGIN, type PremanOptions } from './preman.ts';
 import { installOperations } from './operations.ts';
 import { mountBraintrustCompatibility } from './braintrust-compat.ts';
 import { ingestOtlp, writeTrace } from './traces.ts';
@@ -55,6 +56,7 @@ export interface AppOptions {
   providerApiKey?: string;
   production?: boolean;
   oidc?: OidcOptions;
+  preman?: PremanOptions;
   trustedProxies?: string[];
   allowedOrigins?: string[];
   sessionTtlMs?: number;
@@ -169,7 +171,7 @@ export function createApp(options: AppOptions = {}) {
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
-    res.setHeader('X-Frame-Options', 'DENY');
+    if (!options.preman) res.setHeader('X-Frame-Options', 'DENY');
     if (req.path.startsWith('/api') || req.path.startsWith('/v1'))
       res.setHeader('Cache-Control', 'no-store');
     // Reject DNS-rebinding requests before serving any unauthenticated local data.
@@ -179,19 +181,23 @@ export function createApp(options: AppOptions = {}) {
     const origin = req.get('origin');
     if (origin) {
       const port = req.socket.localPort ?? 4310;
+      const isPremanExchange =
+        !!options.preman && ['/api/auth/preman/exchange', '/api/auth/logout'].includes(req.path);
       const origins = new Set(
-        production
-          ? allowedOrigins
-          : [
-              `http://127.0.0.1:${port}`,
-              `http://localhost:${port}`,
-              `http://[::1]:${port}`,
-              'http://127.0.0.1:5173',
-              'http://localhost:5173',
-              'http://127.0.0.1:5190',
-              'http://localhost:5190',
-              ...allowedOrigins,
-            ],
+        isPremanExchange
+          ? [PREMAN_WEB_ORIGIN, 'https://verus.preman.live']
+          : production
+            ? allowedOrigins
+            : [
+                `http://127.0.0.1:${port}`,
+                `http://localhost:${port}`,
+                `http://[::1]:${port}`,
+                'http://127.0.0.1:5173',
+                'http://localhost:5173',
+                'http://127.0.0.1:5190',
+                'http://localhost:5190',
+                ...allowedOrigins,
+              ],
       );
       if (!origins.has(origin))
         return res.status(403).json({ error: 'Browser origin is not allowed' });
@@ -210,11 +216,20 @@ export function createApp(options: AppOptions = {}) {
   const operations = installOperations(app, store, queue, access, {
     production,
     requestLogging: production,
+    premanEmbedding: !!options.preman,
   });
   app.use(access.auditMiddleware);
   app.use(express.json({ limit: '5mb', strict: true }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
   access.mountPublicRoutes(app);
+  if (options.preman) {
+    try {
+      mountPreman(app, store, access, options.preman);
+    } catch (error) {
+      store.close();
+      throw error;
+    }
+  }
   if (options.oidc) {
     try {
       mountOidc(app, store, access, options.oidc, allowedOrigins);
@@ -352,7 +367,7 @@ export function createApp(options: AppOptions = {}) {
       description: body.description ?? '',
       createdAt: now(),
     };
-    store.put('project', p, p.id);
+    access.createProject(req, p);
     res.status(201).json(p);
   });
   app.get('/api/overview', (req, res) => res.json(store.overview(projectQuery(req, store))));

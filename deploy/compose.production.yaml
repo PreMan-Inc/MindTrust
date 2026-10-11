@@ -1,4 +1,5 @@
-# One isolated customer workspace per stack/VM. Never share its volume or secret.
+# One SQLite writer per stack/VM, with PreMan workspace isolation in the application.
+# Keep this deployment's volume and recovery secret private to its operator.
 services:
   proxy:
     image: caddy:2.11.7-alpine
@@ -39,6 +40,8 @@ services:
       MINDTRUST_OIDC_CLIENT_SECRET: ${MINDTRUST_OIDC_CLIENT_SECRET:-}
       MINDTRUST_OIDC_REDIRECT_URI: ${MINDTRUST_OIDC_REDIRECT_URI:-}
       MINDTRUST_OIDC_LABEL: ${MINDTRUST_OIDC_LABEL:-Company SSO}
+      MINDTRUST_PREMAN_ENABLED: ${MINDTRUST_PREMAN_ENABLED:-false}
+      MINDTRUST_PREMAN_ISSUER: ${MINDTRUST_PREMAN_ISSUER:-https://api.preman.live}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:

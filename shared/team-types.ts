@@ -8,16 +8,25 @@ export interface AuthPrincipal {
   projectIds: string[] | null;
   name: string;
   email?: string;
+  workspaceId: string;
+  authMethod?: 'local' | 'oidc' | 'preman';
 }
 export interface AuthStatus {
   enabled: boolean;
   production: boolean;
   oidc?: { label: string; loginUrl: string };
+  preman?: { loginUrl: string };
 }
 export interface AuthSession {
   principal: AuthPrincipal;
   csrfToken: string | null;
   expiresAt: string | null;
+  upstreamIdentity?: {
+    issuer: string;
+    subject: string;
+    tenantKind: 'workbench_workspace';
+    tenantId: string;
+  };
 }
 export interface WorkspaceUser {
   id: string;
@@ -30,6 +39,7 @@ export interface WorkspaceUser {
   updatedAt: string;
   allowOidc?: boolean;
   oidcLinked?: boolean;
+  managedBy?: 'preman';
 }
 export interface WorkspaceApiKey {
   id: string;

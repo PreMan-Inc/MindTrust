@@ -71,6 +71,20 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     void initialize();
   }, [initialize]);
   useEffect(() => {
+    const refresh = () => {
+      if (session?.principal.authMethod === 'preman' && document.visibilityState === 'visible')
+        void loadSession().catch(() => {});
+    };
+    addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    const timer = setInterval(refresh, 60_000);
+    return () => {
+      removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      clearInterval(timer);
+    };
+  }, [session?.principal.authMethod, loadSession]);
+  useEffect(() => {
     const expired = () => {
       setSession(null);
       setCsrfToken(null);
@@ -125,7 +139,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   return (
     <SessionContext.Provider value={{ session, status, reload: loadSession, signOut, endSession }}>
       <div
-        key={`${session.principal.id}:${session.principal.role}:${session.principal.projectIds?.join(',') ?? '*'}`}
+        key={`${session.principal.id}:${session.principal.workspaceId}:${session.principal.role}:${session.principal.projectIds?.join(',') ?? '*'}`}
       >
         {children}
       </div>
@@ -137,12 +151,7 @@ export function Brand() {
     <a className="brand" href="#overview" aria-label="Verus home">
       <span className="brand-symbol">
         <svg viewBox="0 0 24 24" fill="none">
-          <path
-            d="M5 6l7 12 7-12"
-            stroke="currentColor"
-            strokeWidth="2.6"
-            strokeLinejoin="round"
-          />
+          <path d="M5 6l7 12 7-12" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" />
         </svg>
       </span>
       <span>
@@ -166,6 +175,7 @@ function SignIn({
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
   const [developer, setDeveloper] = useState(false);
+  const [recovery, setRecovery] = useState(false);
   const action = useAction();
   return (
     <div className="auth-page">
@@ -220,123 +230,150 @@ function SignIn({
             <LockKeyhole size={24} />
           </span>
           <div className="eyebrow">WELCOME TO YOUR WORKSPACE</div>
-          <h2>{developer ? 'Connect with a token' : 'Sign in to Verus'}</h2>
+          <h2>{developer ? 'Connect with a token' : 'Continue to Verus'}</h2>
           <p>
             {developer
               ? 'For initial setup and developer access. Regular team members should sign in with their account.'
-              : 'Use the account your workspace administrator created for you.'}
+              : status.preman && !recovery
+                ? 'Use your PreMan account and workspace.'
+                : 'Use your existing workspace recovery account.'}
           </p>
           <ErrorBox message={action.error || initialError} />
           {notice && <div className="info-banner">{notice}</div>}
-          {!developer && status.oidc && (
+          {status.preman && !recovery && (
             <>
-              <a
-                className="button secondary sso-button"
-                href={status.oidc.loginUrl}
-                onClick={() => {
-                  const link = parseSdkExperimentLink(location.pathname);
-                  if (link.kind === 'experiment')
-                    sessionStorage.setItem(PENDING_SDK_LINK_KEY, link.path);
-                }}
-              >
-                <ShieldCheck size={16} />
-                Continue with {status.oidc.label}
-                <ArrowRight size={15} />
+              <a className="button primary sso-button" href={status.preman.loginUrl}>
+                Continue with PreMan <ArrowRight size={15} />
               </a>
-              <div className="auth-divider">
-                <span />
-                or use your workspace password
-                <span />
-              </div>
+              <button className="text-button" onClick={() => setRecovery(true)}>
+                Existing administrator or recovery access
+              </button>
             </>
           )}
-          {developer ? (
-            <Form
-              onSubmit={() =>
-                action.run(async () => {
-                  sessionStorage.setItem(TOKEN_KEY, token.trim());
-                  try {
-                    const s = await api<AuthSession>('/auth/session');
-                    if (s.principal.kind === 'bootstrap') location.hash = 'settings';
-                    await onSignedIn();
-                  } catch (e) {
-                    sessionStorage.removeItem(TOKEN_KEY);
-                    throw e;
+          {(!status.preman || recovery) && (
+            <>
+              {!developer && status.oidc && (
+                <>
+                  <a
+                    className="button secondary sso-button"
+                    href={status.oidc.loginUrl}
+                    onClick={() => {
+                      const link = parseSdkExperimentLink(location.pathname);
+                      if (link.kind === 'experiment')
+                        sessionStorage.setItem(PENDING_SDK_LINK_KEY, link.path);
+                    }}
+                  >
+                    <ShieldCheck size={16} />
+                    Continue with {status.oidc.label}
+                    <ArrowRight size={15} />
+                  </a>
+                  <div className="auth-divider">
+                    <span />
+                    or use your workspace password
+                    <span />
+                  </div>
+                </>
+              )}
+              {developer ? (
+                <Form
+                  onSubmit={() =>
+                    action.run(async () => {
+                      sessionStorage.setItem(TOKEN_KEY, token.trim());
+                      try {
+                        const s = await api<AuthSession>('/auth/session');
+                        if (s.principal.kind === 'bootstrap') location.hash = 'settings';
+                        await onSignedIn();
+                      } catch (e) {
+                        sessionStorage.removeItem(TOKEN_KEY);
+                        throw e;
+                      }
+                    })
                   }
-                })
-              }
-            >
-              <Field
-                label="Administrator token or API key"
-                hint="Your token is kept only for this tab’s session. Never enter a model-provider API key here."
-              >
-                <input
-                  type="password"
-                  autoComplete="off"
-                  autoFocus
-                  required
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-              </Field>
-              <FormActions busy={action.busy} label="Connect to workspace" />
-            </Form>
-          ) : (
-            <Form
-              onSubmit={() =>
-                action.run(async () => {
-                  sessionStorage.removeItem(TOKEN_KEY);
-                  setCsrfToken(null);
-                  await post<AuthSession>('/auth/login', { email, password });
-                  setPassword('');
-                  await onSignedIn();
-                })
-              }
-            >
-              <Field label="Work email">
-                <input
-                  type="email"
-                  autoComplete="username"
-                  autoFocus
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                />
-              </Field>
-              <Field label="Password">
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </Field>
-              <Button variant="primary" type="submit" disabled={action.busy}>
-                <LogIn size={15} />
-                {action.busy ? 'Signing in…' : 'Sign in'}
-                <ArrowRight size={15} />
-              </Button>
-            </Form>
+                >
+                  <Field
+                    label="Administrator token or API key"
+                    hint="Your token is kept only for this tab’s session. Never enter a model-provider API key here."
+                  >
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      autoFocus
+                      required
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                    />
+                  </Field>
+                  <FormActions busy={action.busy} label="Connect to workspace" />
+                </Form>
+              ) : (
+                <Form
+                  onSubmit={() =>
+                    action.run(async () => {
+                      sessionStorage.removeItem(TOKEN_KEY);
+                      setCsrfToken(null);
+                      await post<AuthSession>('/auth/login', { email, password });
+                      setPassword('');
+                      await onSignedIn();
+                    })
+                  }
+                >
+                  <Field label="Work email">
+                    <input
+                      type="email"
+                      autoComplete="username"
+                      autoFocus
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@company.com"
+                    />
+                  </Field>
+                  <Field label="Password">
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </Field>
+                  <Button variant="primary" type="submit" disabled={action.busy}>
+                    <LogIn size={15} />
+                    {action.busy ? 'Signing in…' : 'Sign in'}
+                    <ArrowRight size={15} />
+                  </Button>
+                </Form>
+              )}
+              <div className="auth-help">
+                <p>
+                  {developer
+                    ? 'First time here? Use the administrator token configured on the server, then create your administrator account under Settings → Team.'
+                    : 'Need an account or a password reset? Contact your workspace administrator.'}
+                </p>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    action.setError('');
+                    setDeveloper((v) => !v);
+                  }}
+                >
+                  <KeyRound size={13} />
+                  {developer ? 'Use email and password' : 'Initial setup or developer token'}
+                </button>
+              </div>
+              {status.preman && (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setRecovery(false);
+                    setDeveloper(false);
+                  }}
+                >
+                  Back to PreMan sign-in
+                </button>
+              )}
+            </>
           )}
-          <div className="auth-help">
-            <p>
-              {developer
-                ? 'First time here? Use the administrator token configured on the server, then create your administrator account under Settings → Team.'
-                : 'Need an account or a password reset? Contact your workspace administrator.'}
-            </p>
-            <button
-              className="text-button"
-              onClick={() => {
-                action.setError('');
-                setDeveloper((v) => !v);
-              }}
-            >
-              <KeyRound size={13} />
-              {developer ? 'Use email and password' : 'Initial setup or developer token'}
-            </button>
-          </div>
           <div className="auth-security-note">
             <ShieldCheck size={13} />
             {status.production ? 'Private workspace · secure session' : 'Development workspace'}

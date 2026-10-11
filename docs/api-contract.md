@@ -29,7 +29,8 @@ Dataset rows carry `hasExpected`: an omitted expectation is different from an ex
 - `POST /auth/change-password` accepts `{currentPassword,newPassword}` from a signed-in user, revokes sessions, and requires a new sign-in.
 - `GET/POST /users` and `PATCH /users/:id` manage named accounts, role, project scopes, disablement, and optional OIDC opt-in. `POST /users/:id/revoke-sessions` invalidates sessions. Workspace administrator required. Passwords require 12–256 characters and are stored as salted scrypt hashes.
 - `GET /audit?limit=100` provides redacted audit events to administrators. `GET /operations` provides queue/readiness/memory state.
-- Root paths `/livez` and `/readyz` are health probes; `/metrics` requires administrator authentication. The supplied public reverse proxy blocks operator endpoints.
+- Root paths `/livez` and `/readyz` are health probes; `/metrics` and `/api/operations` require bootstrap operator authentication. The supplied public reverse proxy blocks operator endpoints.
+- With PreMan configured, `POST /auth/preman/exchange` accepts strict JSON `{code,code_verifier}` and returns the ordinary session plus verified `upstreamIdentity`. Principals, sessions, keys, project access, users, and audits are scoped to a workspace; `projectIds: null` is never deployment-wide. See [PreMan workspace sign-in](preman-shared-login.md) for the complete handoff, renewal, embedding, and schema 4 migration contract.
 - OIDC login/callback paths and the tested Braintrust wire endpoints are documented in [production operations](production-operations.md) and [compatibility](braintrust-compatibility.md).
 - `POST /v1/traces` (no /api prefix): OTLP/HTTP JSON (`resourceSpans`), headers `x-mindtrust-project-id` or resource attribute `mindtrust.project_id`; preserve trace/span IDs, parents, status, nanosecond timestamps. JSON only, return standard `{ partialSuccess?: { rejectedSpans, errorMessage } }`. No protobuf claim.
 
