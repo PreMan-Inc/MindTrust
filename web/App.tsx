@@ -60,7 +60,7 @@ import {
 import { DatasetsPage, ExperimentsPage } from './evaluation';
 import { PlaygroundPage, PromptsPage, ReviewPage, ScorersPage } from './tools';
 import { SettingsPage, initials } from './access';
-import { AuthBoundary } from './auth';
+import { AuthBoundary, Brand } from './auth';
 import { usePermissions, useSession } from './session';
 import { IntegrationsPage } from './integrations';
 import { PENDING_SDK_LINK_KEY, parseSdkExperimentLink, uniqueNamedResource } from './deep-links';
@@ -231,21 +231,7 @@ function WorkspaceApp() {
     >
       <div className="app-shell">
         <aside className={`sidebar ${mobile ? 'mobile-open' : ''}`}>
-          <a className="brand" href="#overview" aria-label="MindTrust home">
-            <span className="brand-symbol">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M4 18V6l8 8 8-8v12"
-                  stroke="currentColor"
-                  strokeWidth="2.6"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </span>
-            <span>
-              mindtrust<span className="brand-period">.</span>
-            </span>
-          </a>
+          <Brand />
           <div className="workspace-picker">
             <label className="project-select">
               <span className="tiny-label">Project</span>
@@ -348,7 +334,7 @@ function WorkspaceApp() {
               >
                 <Menu size={20} />
               </button>
-              <span className="breadcrumb-workspace">MindTrust</span>
+              <span className="breadcrumb-workspace">Verus</span>
               <ChevronRight size={13} />
               <span>{active?.label || 'Settings'}</span>
             </div>

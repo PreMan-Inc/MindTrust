@@ -15,7 +15,7 @@ export function IntegrationsPage() {
   const [importing, setImporting] = useState(false);
   const datasets = useData<Dataset[]>(projectId ? `/datasets?${qs({ projectId })}` : null, refresh);
   const base = integrationBaseUrl();
-  const curl = `export MINDTRUST_URL=${JSON.stringify(base)}\nexport MINDTRUST_API_KEY="<your-scoped-api-key>"\n\ncurl "$MINDTRUST_URL/api/traces" \\\n  -H "Authorization: Bearer $MINDTRUST_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data-binary @- <<'JSON'\n${JSON.stringify({ projectId: projectId || '<project-id>', traces: [{ name: 'my-agent', input: { message: 'Hello' }, output: { answer: 'Hello from MindTrust' }, status: 'ok', metadata: { source: 'integration-example', synthetic: true } }] }, null, 2)}\nJSON`;
+  const curl = `export MINDTRUST_URL=${JSON.stringify(base)}\nexport MINDTRUST_API_KEY="<your-scoped-api-key>"\n\ncurl "$MINDTRUST_URL/api/traces" \\\n  -H "Authorization: Bearer $MINDTRUST_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data-binary @- <<'JSON'\n${JSON.stringify({ projectId: projectId || '<project-id>', traces: [{ name: 'my-agent', input: { message: 'Hello' }, output: { answer: 'Hello from Verus' }, status: 'ok', metadata: { source: 'integration-example', synthetic: true } }] }, null, 2)}\nJSON`;
   const native = `import { MindTrust } from "./sdk/index.mjs";\n\nconst client = new MindTrust({\n  baseUrl: ${JSON.stringify(base)},\n  projectId: ${JSON.stringify(projectId || '<project-id>')},\n  apiKey: process.env.MINDTRUST_API_KEY,\n});\n\nawait client.trace("support-agent", {\n  input: { message: "Hello" }, kind: "agent",\n}, async (span) => {\n  return "Agent response";\n});\nawait client.flush();`;
   const otlp = `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${base}/v1/traces\nOTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<your-key>,x-mindtrust-project-id=${encodeURIComponent(projectId || '<project-id>')}`;
   return (
@@ -67,7 +67,7 @@ export function IntegrationsPage() {
         <BraintrustCompatibility baseUrl={base} projectName={project?.name || ''} />
       )}
       {tab === 'native' && (
-        <Section title="Node.js SDK" detail="Use sdk/index.mjs from the MindTrust repository.">
+        <Section title="Node.js SDK" detail="Use sdk/index.mjs from the project repository.">
           <div className="integration-section-body">
             <CodeSnippet code={native} label="SDK example" />
             <details className="compact-disclosure">
@@ -201,13 +201,13 @@ function BraintrustCompatibility({
   baseUrl: string;
   projectName: string;
 }) {
-  const environment = `npm install braintrust@3.37.2\n\nexport BRAINTRUST_APP_URL=${JSON.stringify(baseUrl)}\nexport BRAINTRUST_API_URL=${JSON.stringify(baseUrl)}\nexport BRAINTRUST_API_KEY="<your-scoped-MindTrust-key>"\nexport BRAINTRUST_ORG_NAME="MindTrust"`;
-  const logger = `import { initLogger, wrapTraced } from "braintrust";\n\nconst logger = initLogger({\n  projectName: ${JSON.stringify(projectName || '<existing-MindTrust-project-name>')},\n  asyncFlush: false,\n});\n\nconst normalize = wrapTraced(\n  async (input) => input.toUpperCase(),\n  { name: "normalize" },\n);\n\nawait logger.traced(async (span) => {\n  span.log({ input: "hello", metadata: { synthetic: true } });\n  const output = await normalize("hello");\n  span.log({ output });\n  return output;\n}, { name: "migration-smoke-check" });\n\nawait logger.flush();`;
+  const environment = `npm install braintrust@3.37.2\n\nexport BRAINTRUST_APP_URL=${JSON.stringify(baseUrl)}\nexport BRAINTRUST_API_URL=${JSON.stringify(baseUrl)}\nexport BRAINTRUST_API_KEY="<your-scoped-api-key>"\nexport BRAINTRUST_ORG_NAME="MindTrust"`;
+  const logger = `import { initLogger, wrapTraced } from "braintrust";\n\nconst logger = initLogger({\n  projectName: ${JSON.stringify(projectName || '<existing-project-name>')},\n  asyncFlush: false,\n});\n\nconst normalize = wrapTraced(\n  async (input) => input.toUpperCase(),\n  { name: "normalize" },\n);\n\nawait logger.traced(async (span) => {\n  span.log({ input: "hello", metadata: { synthetic: true } });\n  const output = await normalize("hello");\n  span.log({ output });\n  return output;\n}, { name: "migration-smoke-check" });\n\nawait logger.flush();`;
   return (
     <Section title="Connect your SDK" detail="Tested with JavaScript 3.37.2 and Python 0.45.0.">
       <div className="integration-section-body">
         <p className="integration-paragraph">
-          Traces, dataset versions and client-side evaluations. Use a MindTrust project and scoped
+          Traces, dataset versions and client-side evaluations. Use a Verus project and scoped
           API key.
         </p>
         <CodeSnippet code={environment} label="Braintrust configuration" />
@@ -227,7 +227,7 @@ function BraintrustCompatibility({
             matching case coverage.
           </p>
           <p className="muted small-text">
-            Replace Braintrust project IDs with MindTrust IDs. A scoped editor key needs an existing
+            Replace Braintrust project IDs with Verus IDs. A scoped editor key needs an existing
             project. Compare outputs, scores and span trees before switching workloads.
           </p>
           <a

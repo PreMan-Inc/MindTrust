@@ -318,7 +318,7 @@ function TraceExplorer() {
               disabled={action.busy}
               onClick={() =>
                 action.run(async () => {
-                  await download(`/traces/export?${qs({ projectId })}`, 'mindtrust-traces.json');
+                  await download(`/traces/export?${qs({ projectId })}`, 'verus-traces.json');
                   notify('All project traces exported');
                 })
               }

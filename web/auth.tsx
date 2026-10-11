@@ -134,11 +134,11 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 }
 export function Brand() {
   return (
-    <a className="brand" href="#overview" aria-label="MindTrust home">
+    <a className="brand" href="#overview" aria-label="Verus home">
       <span className="brand-symbol">
         <svg viewBox="0 0 24 24" fill="none">
           <path
-            d="M4 18V6l8 8 8-8v12"
+            d="M5 6l7 12 7-12"
             stroke="currentColor"
             strokeWidth="2.6"
             strokeLinejoin="round"
@@ -146,7 +146,7 @@ export function Brand() {
         </svg>
       </span>
       <span>
-        mindtrust<span className="brand-period">.</span>
+        verus<span className="brand-period">.</span>
       </span>
     </a>
   );
@@ -211,7 +211,7 @@ function SignIn({
           </div>
         </div>
         <div className="auth-story-footer">
-          MindTrust by PreMan <span>Built around your team’s data.</span>
+          Verus by PreMan <span>Built around your team’s data.</span>
         </div>
       </div>
       <main className="auth-panel">
@@ -220,7 +220,7 @@ function SignIn({
             <LockKeyhole size={24} />
           </span>
           <div className="eyebrow">WELCOME TO YOUR WORKSPACE</div>
-          <h2>{developer ? 'Connect with a token' : 'Sign in to MindTrust'}</h2>
+          <h2>{developer ? 'Connect with a token' : 'Sign in to Verus'}</h2>
           <p>
             {developer
               ? 'For initial setup and developer access. Regular team members should sign in with their account.'

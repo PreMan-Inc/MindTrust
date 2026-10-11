@@ -1476,7 +1476,7 @@ function ExperimentView({
                 action.run(() =>
                   download(
                     `/experiments/${encodeURIComponent(id)}/export`,
-                    'mindtrust-experiment.json',
+                    'verus-experiment.json',
                   ),
                 )
               }

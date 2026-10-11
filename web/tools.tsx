@@ -258,7 +258,7 @@ export function PlaygroundPage() {
   const [template, setTemplate] = useState('{{input}}');
   const [system, setSystem] = useState('You are a helpful assistant.');
   const [model, setModel] = useState('gpt-4.1-mini');
-  const [input, setInput] = useState('{\n  "message": "Hello, MindTrust"\n}');
+  const [input, setInput] = useState('{\n  "message": "Hello, Verus"\n}');
   const [temperature, setTemperature] = useState(0);
   const [result, setResult] = useState<PlaygroundResult | null>(null);
   const [resultType, setResultType] = useState<TaskConfig['type']>('template');
