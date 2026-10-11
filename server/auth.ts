@@ -9,10 +9,16 @@ import {
 import type { Express, NextFunction, Request, Response } from 'express';
 import { z } from 'zod';
 import type { Project } from '../shared/types.ts';
-import { HttpError, Store } from './store.ts';
+import { HttpError, LEGACY_WORKSPACE_ID, Store } from './store.ts';
 import { idSchema, nameSchema, parse, positiveQuery } from './validation.ts';
 
 export type Role = 'viewer' | 'editor' | 'admin';
+export interface UpstreamIdentity {
+  issuer: string;
+  subject: string;
+  tenantKind: 'workbench_workspace';
+  tenantId: string;
+}
 export interface Principal {
   id: string;
   kind: 'user' | 'api-key' | 'bootstrap' | 'development';
@@ -20,6 +26,8 @@ export interface Principal {
   projectIds: string[] | null;
   name: string;
   email?: string;
+  workspaceId: string;
+  authMethod?: 'local' | 'oidc' | 'preman';
 }
 export interface AccessOptions {
   adminToken?: string;
@@ -32,7 +40,7 @@ interface UserRecord {
   id: string;
   email: string;
   name: string;
-  password_hash: string;
+  password_hash: string | null;
   role: Role;
   projects_json: string;
   disabled: number;
@@ -41,12 +49,24 @@ interface UserRecord {
   oidc_subject: string | null;
   created_at: string;
   updated_at: string;
+  identity_source: 'local' | 'preman';
+}
+interface MembershipRecord {
+  user_id: string;
+  workspace_id: string;
+  role: Role;
+  projects_json: string;
+  disabled: number;
+  source: 'local' | 'preman';
 }
 interface SessionRecord {
   id: string;
   user_id: string;
   expires_at: string;
   revoked_at: string | null;
+  workspace_id: string;
+  auth_method: 'local' | 'oidc' | 'preman';
+  upstream_identity_json: string | null;
 }
 interface KeyRecord {
   id: string;
@@ -58,6 +78,8 @@ interface KeyRecord {
   projects_json: string;
   expires_at: string;
   revoked_at: string | null;
+  workspace_id: string;
+  identity_source: 'local' | 'preman';
 }
 export interface TeamUser {
   id: string;
@@ -70,6 +92,7 @@ export interface TeamUser {
   oidcLinked: boolean;
   createdAt: string;
   updatedAt: string;
+  managedBy?: 'preman';
 }
 export interface TeamApiKey {
   id: string;
@@ -102,6 +125,7 @@ const publicUser = (u: UserRecord): TeamUser => ({
   oidcLinked: !!u.oidc_subject,
   createdAt: u.created_at,
   updatedAt: u.updated_at,
+  ...(u.identity_source === 'preman' ? { managedBy: 'preman' as const } : {}),
 });
 const publicKey = (k: KeyRecord): TeamApiKey => ({
   id: k.id,
@@ -192,10 +216,14 @@ export class AccessController {
   private readonly principals = new WeakMap<Request, Principal>();
   private readonly sessions = new WeakMap<
     Request,
-    { id: string; csrfToken: string; expiresAt: string }
+    { id: string; csrfToken: string; expiresAt: string; upstreamIdentity?: UpstreamIdentity }
   >();
   private readonly projects = new WeakMap<Request, string>();
   private oidcDisplay: { label: string; loginUrl: string } | undefined;
+  private premanDisplay: { loginUrl: string } | undefined;
+  configurePreman() {
+    this.premanDisplay = { loginUrl: 'https://app.preman.live/workbench/verus' };
+  }
   configureOidc(label: string) {
     this.oidcDisplay = { label, loginUrl: '/api/auth/oidc/login' };
   }
@@ -229,49 +257,100 @@ export class AccessController {
       );
   }
   private migrate() {
-    this.store.transaction(() => {
-      const columns = new Set(
-        (this.store.db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map(
-          (c) => c.name,
-        ),
-      );
-      for (const [name, definition] of [
-        ['role', "TEXT NOT NULL DEFAULT 'editor'"],
-        ['projects_json', "TEXT NOT NULL DEFAULT 'null'"],
-        ['expires_at', 'TEXT'],
-        ['revoked_at', 'TEXT'],
-        ['created_by', 'TEXT'],
-      ])
-        if (!columns.has(name))
-          this.store.db.exec(`ALTER TABLE api_keys ADD COLUMN ${name} ${definition}`);
-      // Legacy keys retain editor access for a bounded migration window; never inherit admin.
-      this.store.db
-        .prepare('UPDATE api_keys SET expires_at=? WHERE expires_at IS NULL')
-        .run(new Date(Date.now() + 30 * 86400000).toISOString());
-      this.store.db
-        .exec(`CREATE TABLE IF NOT EXISTS auth_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('viewer','editor','admin')),projects_json TEXT NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+    this.store.db.exec('PRAGMA foreign_keys=OFF');
+    try {
+      this.store.transaction(() => {
+        const columns = new Set(
+          (this.store.db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map(
+            (c) => c.name,
+          ),
+        );
+        for (const [name, definition] of [
+          ['role', "TEXT NOT NULL DEFAULT 'editor'"],
+          ['projects_json', "TEXT NOT NULL DEFAULT 'null'"],
+          ['expires_at', 'TEXT'],
+          ['revoked_at', 'TEXT'],
+          ['created_by', 'TEXT'],
+        ])
+          if (!columns.has(name))
+            this.store.db.exec(`ALTER TABLE api_keys ADD COLUMN ${name} ${definition}`);
+        // Legacy keys retain editor access for a bounded migration window; never inherit admin.
+        this.store.db
+          .prepare('UPDATE api_keys SET expires_at=? WHERE expires_at IS NULL')
+          .run(new Date(Date.now() + 30 * 86400000).toISOString());
+        this.store.db
+          .exec(`CREATE TABLE IF NOT EXISTS auth_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('viewer','editor','admin')),projects_json TEXT NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS auth_sessions(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES auth_users(id),token_hash TEXT UNIQUE NOT NULL,expires_at TEXT NOT NULL,revoked_at TEXT,created_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions(user_id);
         CREATE TABLE IF NOT EXISTS auth_login_limits(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS audit_events(id TEXT PRIMARY KEY,at TEXT NOT NULL,actor_id TEXT,actor_kind TEXT NOT NULL,action TEXT NOT NULL,project_id TEXT,outcome TEXT NOT NULL,status_code INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS audit_events_time ON audit_events(at);`);
-      const userColumns = new Set(
-        (this.store.db.prepare('PRAGMA table_info(auth_users)').all() as { name: string }[]).map(
-          (c) => c.name,
-        ),
-      );
-      for (const [name, definition] of [
-        ['allow_oidc', 'INTEGER NOT NULL DEFAULT 0'],
-        ['oidc_issuer', 'TEXT'],
-        ['oidc_subject', 'TEXT'],
-      ])
-        if (!userColumns.has(name))
-          this.store.db.exec(`ALTER TABLE auth_users ADD COLUMN ${name} ${definition}`);
-      this.store.db.exec(
-        'CREATE UNIQUE INDEX IF NOT EXISTS auth_user_oidc ON auth_users(oidc_issuer,oidc_subject) WHERE oidc_subject IS NOT NULL',
-      );
-      this.store.db.exec('PRAGMA user_version=3');
-    });
+        const userColumns = new Set(
+          (this.store.db.prepare('PRAGMA table_info(auth_users)').all() as { name: string }[]).map(
+            (c) => c.name,
+          ),
+        );
+        for (const [name, definition] of [
+          ['allow_oidc', 'INTEGER NOT NULL DEFAULT 0'],
+          ['oidc_issuer', 'TEXT'],
+          ['oidc_subject', 'TEXT'],
+        ])
+          if (!userColumns.has(name))
+            this.store.db.exec(`ALTER TABLE auth_users ADD COLUMN ${name} ${definition}`);
+        this.store.db.exec(
+          'CREATE UNIQUE INDEX IF NOT EXISTS auth_user_oidc ON auth_users(oidc_issuer,oidc_subject) WHERE oidc_subject IS NOT NULL',
+        );
+        if (!userColumns.has('identity_source')) {
+          // Rebuild once to permit passwordless identities and identical display emails
+          // from different authorities, while keeping local-login email uniqueness.
+          this.store.db.exec(`
+          CREATE TABLE auth_users_v4(id TEXT PRIMARY KEY,email TEXT NOT NULL,name TEXT NOT NULL,password_hash TEXT,role TEXT NOT NULL CHECK(role IN ('viewer','editor','admin')),projects_json TEXT NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,allow_oidc INTEGER NOT NULL DEFAULT 0,oidc_issuer TEXT,oidc_subject TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,identity_source TEXT NOT NULL DEFAULT 'local' CHECK(identity_source IN ('local','preman')));
+          INSERT INTO auth_users_v4(id,email,name,password_hash,role,projects_json,disabled,allow_oidc,oidc_issuer,oidc_subject,created_at,updated_at) SELECT id,email,name,password_hash,role,projects_json,disabled,allow_oidc,oidc_issuer,oidc_subject,created_at,updated_at FROM auth_users;
+          DROP TABLE auth_users;
+          ALTER TABLE auth_users_v4 RENAME TO auth_users;
+        `);
+        }
+        this.store.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS auth_local_email ON auth_users(email) WHERE identity_source='local';
+        CREATE UNIQUE INDEX IF NOT EXISTS auth_user_oidc ON auth_users(oidc_issuer,oidc_subject) WHERE oidc_subject IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS auth_external_identities(issuer TEXT NOT NULL,subject TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES auth_users(id),PRIMARY KEY(issuer,subject),UNIQUE(user_id));
+        CREATE TABLE IF NOT EXISTS auth_workspace_members(user_id TEXT NOT NULL REFERENCES auth_users(id),workspace_id TEXT NOT NULL REFERENCES workspaces(id),role TEXT NOT NULL CHECK(role IN ('viewer','editor','admin')),projects_json TEXT NOT NULL,disabled INTEGER NOT NULL DEFAULT 0,source TEXT NOT NULL CHECK(source IN ('local','preman')),PRIMARY KEY(user_id,workspace_id));
+        CREATE TABLE IF NOT EXISTS auth_preman_exchanges(code_hash TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);
+      `);
+        for (const [table, name, definition] of [
+          [
+            'auth_sessions',
+            'workspace_id',
+            "TEXT NOT NULL DEFAULT 'legacy' REFERENCES workspaces(id)",
+          ],
+          ['auth_sessions', 'auth_method', "TEXT NOT NULL DEFAULT 'local'"],
+          ['auth_sessions', 'upstream_identity_json', 'TEXT'],
+          ['api_keys', 'workspace_id', "TEXT NOT NULL DEFAULT 'legacy' REFERENCES workspaces(id)"],
+          ['api_keys', 'identity_source', "TEXT NOT NULL DEFAULT 'local'"],
+          [
+            'audit_events',
+            'workspace_id',
+            "TEXT NOT NULL DEFAULT 'legacy' REFERENCES workspaces(id)",
+          ],
+        ]) {
+          const columns = this.store.db.prepare(`PRAGMA table_info(${table})`).all() as {
+            name: string;
+          }[];
+          if (!columns.some((column) => column.name === name))
+            this.store.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        }
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO auth_workspace_members(user_id,workspace_id,role,projects_json,disabled,source) SELECT id,?,role,projects_json,disabled,'local' FROM auth_users WHERE identity_source='local'",
+          )
+          .run(LEGACY_WORKSPACE_ID);
+        if (this.store.db.prepare('PRAGMA foreign_key_check').all().length)
+          throw new Error('Authentication migration failed its foreign-key check');
+        this.store.db.exec('PRAGMA user_version=4');
+      });
+    } finally {
+      this.store.db.exec('PRAGMA foreign_keys=ON');
+    }
   }
   get enabled() {
     return (
@@ -284,7 +363,7 @@ export class AccessController {
     const p = req ? this.principals.get(req) : undefined;
     this.store.db
       .prepare(
-        'INSERT INTO audit_events(id,at,actor_id,actor_kind,action,project_id,outcome,status_code) VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO audit_events(id,at,actor_id,actor_kind,action,project_id,outcome,status_code,workspace_id) VALUES(?,?,?,?,?,?,?,?,?)',
       )
       .run(
         randomUUID(),
@@ -295,6 +374,7 @@ export class AccessController {
         req ? (this.projects.get(req) ?? null) : null,
         statusCode < 400 ? 'success' : 'denied',
         statusCode,
+        p?.workspaceId ?? LEGACY_WORKSPACE_ID,
       );
   }
   auditMiddleware = (req: Request, res: Response, next: NextFunction) => {
@@ -322,6 +402,7 @@ export class AccessController {
           role: 'admin',
           projectIds: null,
           name: 'Bootstrap administrator',
+          workspaceId: LEGACY_WORKSPACE_ID,
         });
         return;
       }
@@ -335,6 +416,8 @@ export class AccessController {
         role: key.role,
         projectIds: JSON.parse(key.projects_json),
         name: key.name,
+        workspaceId: key.workspace_id,
+        ...(key.identity_source === 'preman' ? { authMethod: 'preman' as const } : {}),
       });
       return;
     }
@@ -349,6 +432,9 @@ export class AccessController {
         .prepare('SELECT * FROM auth_users WHERE id=?')
         .get(session.user_id) as UserRecord | undefined;
       if (!user || user.disabled) throw new HttpError(401, 'Session is invalid or expired');
+      const membership = this.membership(user.id, session.workspace_id);
+      if (!membership || membership.disabled)
+        throw new HttpError(401, 'Workspace access is unavailable');
       const csrfToken = createHmac('sha256', cookie).update('mindtrust-csrf-v1').digest('hex');
       if (
         !['GET', 'HEAD', 'OPTIONS'].includes(req.method) &&
@@ -358,12 +444,21 @@ export class AccessController {
       this.principals.set(req, {
         id: user.id,
         kind: 'user',
-        role: user.role,
-        projectIds: JSON.parse(user.projects_json),
+        role: membership.role,
+        projectIds: JSON.parse(membership.projects_json),
         name: user.name,
         email: user.email,
+        workspaceId: session.workspace_id,
+        authMethod: session.auth_method,
       });
-      this.sessions.set(req, { id: session.id, csrfToken, expiresAt: session.expires_at });
+      this.sessions.set(req, {
+        id: session.id,
+        csrfToken,
+        expiresAt: session.expires_at,
+        ...(session.upstream_identity_json
+          ? { upstreamIdentity: JSON.parse(session.upstream_identity_json) as UpstreamIdentity }
+          : {}),
+      });
       return;
     }
     if (!this.enabled) {
@@ -373,6 +468,7 @@ export class AccessController {
         role: 'admin',
         projectIds: null,
         name: 'Local development',
+        workspaceId: LEGACY_WORKSPACE_ID,
       });
       return;
     }
@@ -395,11 +491,24 @@ export class AccessController {
     if (p.role !== 'admin' || p.projectIds !== null)
       throw new HttpError(403, 'Workspace administrator access is required');
   }
+  requireOperator(req: Request) {
+    if (!['bootstrap', 'development'].includes(this.principal(req).kind))
+      throw new HttpError(403, 'Deployment operator access is required');
+  }
+  workspaceId(req: Request) {
+    return this.principal(req).workspaceId;
+  }
+  createProject(req: Request, project: Project) {
+    this.requireCreateProject(req);
+    return this.store.createProject(project, this.workspaceId(req));
+  }
   requireCreateProject(req: Request) {
     this.requireAdmin(req);
   }
   requireProject(req: Request, projectId: string, mode: 'read' | 'write') {
     const p = this.principal(req);
+    if (this.store.projectWorkspace(projectId) !== p.workspaceId)
+      throw new HttpError(403, 'Access to this project is not allowed');
     if (p.projectIds !== null && !p.projectIds.includes(projectId))
       throw new HttpError(403, 'Access to this project is not allowed');
     if (mode === 'write' && p.role === 'viewer')
@@ -409,9 +518,11 @@ export class AccessController {
   }
   filterProjects(req: Request, projects: Project[]) {
     const p = this.principal(req);
-    return p.projectIds === null
-      ? projects
-      : projects.filter((project) => p.projectIds!.includes(project.id));
+    return projects.filter(
+      (project) =>
+        this.store.projectWorkspace(project.id) === p.workspaceId &&
+        (p.projectIds === null || p.projectIds.includes(project.id)),
+    );
   }
   listProjects(req: Request) {
     return this.filterProjects(req, this.store.list<Project>('project'));
@@ -432,13 +543,35 @@ export class AccessController {
     this.requireProject(req, projectId, mode);
     return projectId;
   }
-  private validateScope(role: Role, projectIds: string[] | null) {
+  private validateScope(role: Role, projectIds: string[] | null, workspaceId: string) {
     if (role === 'admin' && projectIds !== null)
       throw new HttpError(400, 'Administrator role requires all-project access');
     if (projectIds !== null) {
       if (new Set(projectIds).size !== projectIds.length)
         throw new HttpError(400, 'Duplicate project IDs');
-      for (const id of projectIds) this.store.project(id);
+      for (const id of projectIds) {
+        if (this.store.projectWorkspace(id) !== workspaceId)
+          throw new HttpError(403, 'Scope contains a project outside this workspace');
+        this.store.project(id);
+      }
+    }
+  }
+  private membership(userId: string, workspaceId: string) {
+    return this.store.db
+      .prepare('SELECT * FROM auth_workspace_members WHERE user_id=? AND workspace_id=?')
+      .get(userId, workspaceId) as MembershipRecord | undefined;
+  }
+  private localManagement(req: Request, userId?: string) {
+    this.requireAdmin(req);
+    if (
+      this.workspaceId(req) !== LEGACY_WORKSPACE_ID ||
+      this.principal(req).authMethod === 'preman'
+    )
+      throw new HttpError(403, 'Workspace membership is managed in PreMan');
+    if (userId) {
+      const member = this.membership(userId, this.workspaceId(req));
+      if (!member) throw new HttpError(404, 'User not found');
+      if (member.source !== 'local') throw new HttpError(403, 'This account is managed in PreMan');
     }
   }
   throttleSignIn(req: Request) {
@@ -477,31 +610,115 @@ export class AccessController {
       principal: this.principal(req),
       csrfToken: this.sessions.get(req)?.csrfToken ?? null,
       expiresAt: this.sessions.get(req)?.expiresAt ?? null,
+      ...(this.sessions.get(req)?.upstreamIdentity
+        ? { upstreamIdentity: this.sessions.get(req)!.upstreamIdentity }
+        : {}),
     };
   }
-  startUserSession(req: Request, res: Response, userId: string) {
+  startUserSession(
+    req: Request,
+    res: Response,
+    userId: string,
+    options: {
+      workspaceId?: string;
+      authMethod?: 'local' | 'oidc' | 'preman';
+      expiresAt?: string;
+      upstreamIdentity?: UpstreamIdentity;
+    } = {},
+  ) {
     const user = this.store.db.prepare('SELECT * FROM auth_users WHERE id=?').get(userId) as
       UserRecord | undefined;
     if (!user || user.disabled) throw new HttpError(401, 'Account is unavailable');
+    const workspaceId = options.workspaceId ?? LEGACY_WORKSPACE_ID;
+    const membership = this.membership(user.id, workspaceId);
+    if (!membership || membership.disabled)
+      throw new HttpError(401, 'Workspace access is unavailable');
+    const maxTtl =
+      options.authMethod === 'preman' ? Math.min(this.sessionTtlMs, 300_000) : this.sessionTtlMs;
+    const now = Date.now();
+    const deadline = Math.min(
+      now + maxTtl,
+      options.expiresAt ? Date.parse(options.expiresAt) : now + maxTtl,
+    );
+    const ttl = deadline - now;
+    if (!Number.isFinite(ttl) || ttl <= 0) throw new HttpError(401, 'Identity session has expired');
+    const expiresAt = new Date(deadline).toISOString();
+    const existingToken = options.authMethod === 'preman' ? sessionCookie(req) : undefined;
+    if (existingToken) {
+      const existing = this.store.db
+        .prepare('SELECT * FROM auth_sessions WHERE token_hash=?')
+        .get(sha(existingToken)) as SessionRecord | undefined;
+      if (existing && !existing.revoked_at && live(existing.expires_at)) {
+        const upstream = existing.upstream_identity_json
+          ? (JSON.parse(existing.upstream_identity_json) as UpstreamIdentity)
+          : undefined;
+        const csrfToken = createHmac('sha256', existingToken)
+          .update('mindtrust-csrf-v1')
+          .digest('hex');
+        const sameIdentity =
+          existing.user_id === userId &&
+          existing.workspace_id === workspaceId &&
+          existing.auth_method === 'preman' &&
+          upstream?.issuer === options.upstreamIdentity?.issuer &&
+          upstream?.subject === options.upstreamIdentity?.subject &&
+          upstream?.tenantId === options.upstreamIdentity?.tenantId;
+        // Fresh upstream authorization extends only this browser's matching, CSRF-proven session.
+        // Keeping its opaque token also preserves the renderer's existing CSRF token.
+        if (sameIdentity && safeEqual(req.get('x-csrf-token') ?? '', csrfToken)) {
+          this.authenticate(req);
+          this.store.db
+            .prepare('UPDATE auth_sessions SET expires_at=? WHERE id=? AND revoked_at IS NULL')
+            .run(expiresAt, existing.id);
+          this.sessions.set(req, {
+            id: existing.id,
+            csrfToken,
+            expiresAt,
+            upstreamIdentity: options.upstreamIdentity,
+          });
+          this.setCookie(res, existingToken, Math.max(0, deadline - Date.now()));
+          return this.viewSession(req);
+        }
+        // An explicit, one-use PKCE login may switch accounts/workspaces or start a
+        // fresh browser context. The old cookie never authorizes the new identity.
+        this.store.db
+          .prepare('UPDATE auth_sessions SET revoked_at=? WHERE id=?')
+          .run(at(), existing.id);
+      }
+    }
     const token = randomBytes(32).toString('hex'),
-      id = randomUUID(),
-      expiresAt = new Date(Date.now() + this.sessionTtlMs).toISOString();
+      id = randomUUID();
     this.store.db
       .prepare(
-        'INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)',
+        'INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at,workspace_id,auth_method,upstream_identity_json) VALUES(?,?,?,?,?,?,?,?)',
       )
-      .run(id, user.id, sha(token), expiresAt, at());
+      .run(
+        id,
+        user.id,
+        sha(token),
+        expiresAt,
+        at(),
+        workspaceId,
+        options.authMethod ?? 'local',
+        options.upstreamIdentity ? JSON.stringify(options.upstreamIdentity) : null,
+      );
     this.principals.set(req, {
       id: user.id,
       kind: 'user',
-      role: user.role,
-      projectIds: JSON.parse(user.projects_json),
+      role: membership.role,
+      projectIds: JSON.parse(membership.projects_json),
       name: user.name,
       email: user.email,
+      workspaceId,
+      authMethod: options.authMethod ?? 'local',
     });
     const csrfToken = createHmac('sha256', token).update('mindtrust-csrf-v1').digest('hex');
-    this.sessions.set(req, { id, csrfToken, expiresAt });
-    this.setCookie(res, token, this.sessionTtlMs);
+    this.sessions.set(req, {
+      id,
+      csrfToken,
+      expiresAt,
+      upstreamIdentity: options.upstreamIdentity,
+    });
+    this.setCookie(res, token, Math.max(0, deadline - Date.now()));
     return this.viewSession(req);
   }
   mountPublicRoutes(app: Express) {
@@ -510,6 +727,7 @@ export class AccessController {
         enabled: this.enabled,
         production: this.production,
         ...(this.oidcDisplay ? { oidc: this.oidcDisplay } : {}),
+        ...(this.premanDisplay ? { preman: this.premanDisplay } : {}),
       }),
     );
     app.post('/api/auth/login', async (req, res) => {
@@ -522,7 +740,7 @@ export class AccessController {
       );
       this.rateLimit(req, body.email);
       const user = this.store.db
-        .prepare('SELECT * FROM auth_users WHERE email=?')
+        .prepare("SELECT * FROM auth_users WHERE email=? AND identity_source='local'")
         .get(body.email) as UserRecord | undefined;
       // The unknown-account path performs the same scrypt work and returns the same error.
       const encoded =
@@ -556,6 +774,7 @@ export class AccessController {
     app.post('/api/auth/change-password', async (req, res) => {
       const p = this.principal(req);
       if (p.kind !== 'user') throw new HttpError(403, 'Sign in as a user to change your password');
+      if (p.authMethod === 'preman') throw new HttpError(403, 'This account is managed in PreMan');
       const body = parse(
         z.object({ currentPassword: z.string().min(1).max(256), newPassword: passwordSchema }),
         req.body,
@@ -564,7 +783,7 @@ export class AccessController {
       const user = this.store.db
         .prepare('SELECT * FROM auth_users WHERE id=?')
         .get(p.id) as unknown as UserRecord;
-      if (!(await verifyPassword(body.currentPassword, user.password_hash)))
+      if (!user.password_hash || !(await verifyPassword(body.currentPassword, user.password_hash)))
         throw new HttpError(401, 'Current password is incorrect');
       const passwordHash = await hashPassword(body.newPassword);
       this.store.transaction(() => {
@@ -603,13 +822,15 @@ export class AccessController {
       res.json(
         (
           this.store.db
-            .prepare('SELECT * FROM auth_users ORDER BY created_at DESC')
-            .all() as unknown as UserRecord[]
+            .prepare(
+              'SELECT u.*,m.role,m.projects_json,m.disabled FROM auth_users u JOIN auth_workspace_members m ON m.user_id=u.id WHERE m.workspace_id=? ORDER BY u.created_at DESC',
+            )
+            .all(this.workspaceId(req)) as unknown as UserRecord[]
         ).map(publicUser),
       );
     });
     app.post('/api/users', async (req, res) => {
-      this.requireAdmin(req);
+      this.localManagement(req);
       const body = parse(
         z.object({
           email: z.string().trim().toLowerCase().email().max(254),
@@ -621,13 +842,21 @@ export class AccessController {
         }),
         req.body,
       );
-      this.validateScope(body.role, body.projectIds);
-      if (this.store.db.prepare('SELECT id FROM auth_users WHERE email=?').get(body.email))
+      this.validateScope(body.role, body.projectIds, this.workspaceId(req));
+      if (
+        this.store.db
+          .prepare("SELECT id FROM auth_users WHERE email=? AND identity_source='local'")
+          .get(body.email)
+      )
         throw new HttpError(409, 'A user with this email already exists');
       const passwordHash = await hashPassword(body.password),
         id = randomUUID(),
         created = at();
-      if (this.store.db.prepare('SELECT id FROM auth_users WHERE email=?').get(body.email))
+      if (
+        this.store.db
+          .prepare("SELECT id FROM auth_users WHERE email=? AND identity_source='local'")
+          .get(body.email)
+      )
         throw new HttpError(409, 'A user with this email already exists');
       this.store.db
         .prepare(
@@ -644,6 +873,11 @@ export class AccessController {
           created,
           Number(body.allowOidc),
         );
+      this.store.db
+        .prepare(
+          "INSERT INTO auth_workspace_members(user_id,workspace_id,role,projects_json,source) VALUES(?,?,?,?,'local')",
+        )
+        .run(id, this.workspaceId(req), body.role, JSON.stringify(body.projectIds));
       res
         .status(201)
         .json(
@@ -655,7 +889,7 @@ export class AccessController {
         );
     });
     app.patch('/api/users/:id', async (req, res) => {
-      this.requireAdmin(req);
+      this.localManagement(req, parse(idSchema, req.params.id));
       const id = parse(idSchema, req.params.id),
         body = parse(
           z.object({
@@ -674,7 +908,7 @@ export class AccessController {
       const role = body.role ?? user.role,
         projectIds =
           body.projectIds === undefined ? JSON.parse(user.projects_json) : body.projectIds;
-      this.validateScope(role, projectIds);
+      this.validateScope(role, projectIds, this.workspaceId(req));
       const passwordHash = body.password ? await hashPassword(body.password) : undefined;
       this.store.transaction(() => {
         // Preserve simultaneous permission changes while password hashing awaits.
@@ -684,7 +918,7 @@ export class AccessController {
         const nextRole = body.role ?? current.role;
         const nextProjects =
           body.projectIds === undefined ? JSON.parse(current.projects_json) : body.projectIds;
-        this.validateScope(nextRole, nextProjects);
+        this.validateScope(nextRole, nextProjects, this.workspaceId(req));
         this.store.db
           .prepare(
             'UPDATE auth_users SET name=?,password_hash=?,role=?,projects_json=?,disabled=?,updated_at=?,allow_oidc=? WHERE id=?',
@@ -698,6 +932,17 @@ export class AccessController {
             at(),
             body.allowOidc === undefined ? current.allow_oidc : Number(body.allowOidc),
             id,
+          );
+        this.store.db
+          .prepare(
+            'UPDATE auth_workspace_members SET role=?,projects_json=?,disabled=? WHERE user_id=? AND workspace_id=?',
+          )
+          .run(
+            nextRole,
+            JSON.stringify(nextProjects),
+            body.disabled === undefined ? current.disabled : Number(body.disabled),
+            id,
+            this.workspaceId(req),
           );
         if (body.password || body.disabled || body.allowOidc === false)
           this.store.db
@@ -713,13 +958,15 @@ export class AccessController {
       );
     });
     app.post('/api/users/:id/revoke-sessions', (req, res) => {
-      this.requireAdmin(req);
+      this.localManagement(req, parse(idSchema, req.params.id));
       const id = parse(idSchema, req.params.id);
       if (!this.store.db.prepare('SELECT id FROM auth_users WHERE id=?').get(id))
         throw new HttpError(404, 'User not found');
       this.store.db
-        .prepare('UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL')
-        .run(at(), id);
+        .prepare(
+          'UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND workspace_id=? AND revoked_at IS NULL',
+        )
+        .run(at(), id, this.workspaceId(req));
       res.json({ ok: true });
     });
     app.get('/api/keys', (req, res) => {
@@ -727,8 +974,8 @@ export class AccessController {
       res.json(
         (
           this.store.db
-            .prepare('SELECT * FROM api_keys ORDER BY created_at DESC')
-            .all() as unknown as KeyRecord[]
+            .prepare('SELECT * FROM api_keys WHERE workspace_id=? ORDER BY created_at DESC')
+            .all(this.workspaceId(req)) as unknown as KeyRecord[]
         ).map(publicKey),
       );
     });
@@ -750,7 +997,7 @@ export class AccessController {
         );
       const role = body.role ?? 'editor',
         projectIds = body.projectIds ?? null;
-      this.validateScope(role, projectIds);
+      this.validateScope(role, projectIds, this.workspaceId(req));
       const expiresAt = body.expiresAt
         ? new Date(body.expiresAt).toISOString()
         : new Date(Date.now() + 90 * 86400000).toISOString();
@@ -763,7 +1010,7 @@ export class AccessController {
         id = randomUUID();
       this.store.db
         .prepare(
-          'INSERT INTO api_keys(id,name,prefix,hash,created_at,role,projects_json,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO api_keys(id,name,prefix,hash,created_at,role,projects_json,expires_at,created_by,workspace_id,identity_source) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
         )
         .run(
           id,
@@ -775,6 +1022,8 @@ export class AccessController {
           JSON.stringify(projectIds),
           expiresAt,
           this.principal(req).id,
+          this.workspaceId(req),
+          this.principal(req).authMethod === 'preman' ? 'preman' : 'local',
         );
       res.status(201).json({
         ...publicKey(
@@ -788,7 +1037,11 @@ export class AccessController {
     app.delete('/api/keys/:id', (req, res) => {
       this.requireAdmin(req);
       const id = parse(idSchema, req.params.id);
-      if (!this.store.db.prepare('SELECT id FROM api_keys WHERE id=?').get(id))
+      if (
+        !this.store.db
+          .prepare('SELECT id FROM api_keys WHERE id=? AND workspace_id=?')
+          .get(id, this.workspaceId(req))
+      )
         throw new HttpError(404, 'API key not found');
       this.store.db.prepare('UPDATE api_keys SET revoked_at=? WHERE id=?').run(at(), id);
       res.json({ ok: true });
@@ -797,8 +1050,10 @@ export class AccessController {
       this.requireAdmin(req);
       const limit = positiveQuery(req.query.limit, 100, 500);
       const rows = this.store.db
-        .prepare('SELECT * FROM audit_events ORDER BY at DESC,rowid DESC LIMIT ?')
-        .all(limit) as {
+        .prepare(
+          'SELECT * FROM audit_events WHERE workspace_id=? ORDER BY at DESC,rowid DESC LIMIT ?',
+        )
+        .all(this.workspaceId(req), limit) as {
         id: string;
         at: string;
         actor_id: string | null;

@@ -40,6 +40,7 @@ export interface ExperimentSnapshot {
   rows: DatasetRow[];
   scorers: Scorer[];
 }
+export const LEGACY_WORKSPACE_ID = 'legacy';
 export class Store {
   readonly db: DatabaseSync;
   private closed = false;
@@ -49,7 +50,7 @@ export class Store {
     const existingVersion = (
       this.db.prepare('PRAGMA user_version').get() as { user_version: number }
     ).user_version;
-    if (existingVersion > 3) {
+    if (existingVersion > 4) {
       this.db.close();
       throw new Error(
         'Database was created by a newer MindTrust version; refusing an unsafe downgrade',
@@ -70,6 +71,20 @@ export class Store {
       CREATE TABLE IF NOT EXISTS trace_sources (trace_id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workspaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,preman_issuer TEXT,preman_tenant_id TEXT,created_at TEXT NOT NULL,UNIQUE(preman_issuer,preman_tenant_id));
+      CREATE TABLE IF NOT EXISTS project_workspaces(project_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id));
+      CREATE INDEX IF NOT EXISTS project_workspaces_workspace ON project_workspaces(workspace_id);
+    `);
+    this.db
+      .prepare('INSERT OR IGNORE INTO workspaces(id,name,created_at) VALUES(?,?,?)')
+      .run(LEGACY_WORKSPACE_ID, 'Existing workspace', new Date().toISOString());
+    // Old records retain their IDs and remain isolated until an operator explicitly binds them.
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO project_workspaces(project_id,workspace_id) SELECT id,? FROM records WHERE kind='project'",
+      )
+      .run(LEGACY_WORKSPACE_ID);
     const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number })
       .user_version;
     if (version < 2)
@@ -120,7 +135,13 @@ export class Store {
       JSON.parse(row.value),
     );
   }
-  put<T extends { id: string }>(kind: Kind, value: T, projectId: string, parentId?: string) {
+  put<T extends { id: string }>(
+    kind: Kind,
+    value: T,
+    projectId: string,
+    parentId?: string,
+    workspaceId = LEGACY_WORKSPACE_ID,
+  ) {
     if (kind === 'span' && !parentId) throw new Error('Span storage requires its trace ID');
     const recordId = kind === 'span' ? JSON.stringify([parentId, value.id]) : value.id;
     const previous = this.db
@@ -128,12 +149,33 @@ export class Store {
       .get(kind, recordId) as { project_id: string } | undefined;
     if (previous && previous.project_id !== projectId)
       throw new HttpError(409, `${kind} ID already belongs to a different project`);
+    if (kind === 'project') {
+      const owner = this.projectWorkspace(value.id);
+      if (owner && owner !== workspaceId)
+        throw new HttpError(409, 'Project already belongs to another workspace');
+      if (!this.db.prepare('SELECT id FROM workspaces WHERE id=?').get(workspaceId))
+        throw new HttpError(404, 'Workspace not found');
+    }
     this.db
       .prepare(
         'INSERT INTO records(kind,id,project_id,parent_id,value) VALUES(?,?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET value=excluded.value,parent_id=excluded.parent_id',
       )
       .run(kind, recordId, projectId, parentId ?? null, JSON.stringify(value));
+    if (kind === 'project')
+      this.db
+        .prepare('INSERT OR IGNORE INTO project_workspaces(project_id,workspace_id) VALUES(?,?)')
+        .run(value.id, workspaceId);
     return value;
+  }
+  projectWorkspace(projectId: string): string | undefined {
+    return (
+      this.db
+        .prepare('SELECT workspace_id FROM project_workspaces WHERE project_id=?')
+        .get(projectId) as { workspace_id: string } | undefined
+    )?.workspace_id;
+  }
+  createProject(project: Project, workspaceId: string) {
+    return this.transaction(() => this.put('project', project, project.id, undefined, workspaceId));
   }
   project(id: string) {
     return this.require<Project>('project', id);

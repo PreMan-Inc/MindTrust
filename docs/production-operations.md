@@ -1,6 +1,6 @@
 # Operating an isolated customer workspace
 
-MindTrust 0.2 is a release candidate for an **isolated customer deployment**. Each customer receives its own service process, persistent volume, bootstrap secret, provider credentials, identity-provider configuration, hostname, and backup destination. The repository does not provision cloud accounts or provide a shared multi-tenant SaaS control plane. No live customer deployment is implied by these files.
+MindTrust 0.2 supports an **isolated customer deployment** by default. Optional [PreMan workspace sign-in](preman-shared-login.md) adds explicit workspace ownership inside one deployment. Separate deployments still receive their own process, volume, bootstrap secret, provider credentials, hostname, and backup destination. The repository does not provision cloud accounts or provide a shared SaaS control plane. No live customer deployment is implied by these files.
 
 This choice makes customer separation explicit while the service still uses a single SQLite writer. Never horizontally scale replicas over the same database file or mount it over NFS. High-availability, distributed ingestion/querying, and high-volume retention remain engineering work. SQLite itself documents the single-writer boundary in [its deployment guidance](https://www.sqlite.org/whentouse.html).
 
@@ -27,9 +27,9 @@ Optional OIDC uses one operator-configured HTTPS issuer, client ID, client secre
 ## Probes, metrics, and logs
 
 - `/livez` reports that the process is alive. `/readyz` checks database availability and drain state, returning 503 while unavailable.
-- `/metrics` exposes Prometheus counters for HTTP requests and cumulative duration, active requests, evaluation backlog, active tasks, readiness, and process RSS. It requires an administrator credential.
-- `/api/operations` provides the equivalent operational snapshot to administrators.
-- The supplied public Caddy configuration blocks those operator endpoints. Scrape them over the protected internal network using a separate admin credential; do not publish the Docker API or application port to bypass the proxy.
+- `/metrics` exposes Prometheus counters for HTTP requests and cumulative duration, active requests, evaluation backlog, active tasks, readiness, and process RSS. It requires the bootstrap operator credential.
+- `/api/operations` provides the equivalent operational snapshot to operators. A workspace administrator or administrator API key does not grant deployment-wide access.
+- The supplied public Caddy configuration blocks those operator endpoints. Scrape them over the protected internal network using the protected operator credential; do not publish the Docker API or application port to bypass the proxy.
 - Production HTTP logs contain request IDs, route templates, method, status, and duration. They exclude request bodies, raw URLs/query strings, cookies, authorization headers, and provider payloads. Audit events record actor IDs, action, project, time, and outcome. Configure protected log forwarding, access, retention, and alerting on the host.
 
 Admission control returns 503 with `Retry-After` when requests are saturated or draining. Evaluation execution has at most four active runs and sixteen active tasks, with bounded pending admission. Only active runs load snapshots. Provider calls have timeouts and response-size limits. Retry ingestion with stable identifiers; do not assume side-effecting external tasks are exactly once.

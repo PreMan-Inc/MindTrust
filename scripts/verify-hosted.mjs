@@ -160,6 +160,19 @@ async function main() {
     'Authentication status: production and enabled must both be true. Set production mode and a strong administrator token.',
   );
   console.log('PASS production authentication is enabled');
+  const ancestors = root.headers
+    .get('content-security-policy')
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('frame-ancestors '));
+  requireCheck(
+    auth.preman
+      ? ancestors === 'frame-ancestors https://app.preman.live' &&
+          !root.headers.has('x-frame-options')
+      : ancestors === "frame-ancestors 'none'" && root.headers.get('x-frame-options') === 'DENY',
+    'Frame policy: expected exact PreMan app ancestry only when shared sign-in is configured, otherwise full frame denial.',
+  );
+  console.log('PASS conditional frame policy matches authentication configuration');
 
   await get('/api/projects', 'Anonymous projects request', { status: 401 });
   console.log('PASS anonymous project access is denied');

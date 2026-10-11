@@ -57,7 +57,7 @@ function inspect(path: string) {
       throw new Error('Backup database integrity check failed');
     const schemaVersion = (db.prepare('PRAGMA user_version').get() as { user_version: number })
       .user_version;
-    if (![2, 3].includes(schemaVersion)) throw new Error('Unsupported backup schema version');
+    if (![2, 3, 4].includes(schemaVersion)) throw new Error('Unsupported backup schema version');
     const counts = db
       .prepare('SELECT kind,count(*) AS n FROM records GROUP BY kind ORDER BY kind')
       .all() as { kind: string; n: number }[];

@@ -2,6 +2,8 @@
 
 This procedure prepares and verifies a deployment; these instructions are not evidence that the hostname is live. Verus is the product name. Existing `MINDTRUST_*` configuration, SDK imports, database names, and `/app/MindTrust/` compatibility links remain supported.
 
+For the integrated PreMan tab, follow [PreMan workspace sign-in](preman-shared-login.md), including the explicit legacy-workspace binding before first sign-in. Enabling shared sign-in alone grants no access to existing projects.
+
 ## Prepare the host
 
 Use the [production runbook](production-operations.md) and the supplied `Dockerfile` or `deploy/compose.production.yaml`. This application needs one continuously running Node 24 process and a durable local writable SQLite volume. Do not use ephemeral function storage, shared NFS, or multiple replicas over one database. Squarespace manages the DNS record; a separate application host runs the service.

@@ -6,14 +6,19 @@ import type { EvaluationQueue } from './evaluation.ts';
 
 interface OperationsAccess {
   authenticate(req: Request): void;
-  requireAdmin(req: Request): void;
+  requireOperator(req: Request): void;
 }
 export function installOperations(
   app: Express,
   store: Store,
   queue: EvaluationQueue,
   access: OperationsAccess,
-  options: { production?: boolean; requestLogging?: boolean; maxInFlight?: number } = {},
+  options: {
+    production?: boolean;
+    requestLogging?: boolean;
+    maxInFlight?: number;
+    premanEmbedding?: boolean;
+  } = {},
 ) {
   let draining = false;
   let active = 0;
@@ -34,10 +39,10 @@ export function installOperations(
   app.use((req, res, next) => {
     const id = randomUUID();
     res.setHeader('X-Request-Id', id);
-    if (options.production)
+    if (options.production || options.premanEmbedding)
       res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+        `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors ${options.premanEmbedding ? 'https://app.preman.live' : "'none'"}; base-uri 'none'; object-src 'none'`,
       );
     const probe =
       (req.method === 'GET' || req.method === 'HEAD') &&
@@ -99,16 +104,16 @@ export function installOperations(
     maxInFlight,
     queue: queue.stats(),
     memory: { rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed },
-    deployment: 'isolated-workspace-single-writer',
+    deployment: 'workspace-scoped-single-writer',
   });
   app.get('/api/operations', (req, res) => {
     access.authenticate(req);
-    access.requireAdmin(req);
+    access.requireOperator(req);
     res.json(snapshot());
   });
   app.get('/metrics', (req, res) => {
     access.authenticate(req);
-    access.requireAdmin(req);
+    access.requireOperator(req);
     const quote = (s: unknown) => JSON.stringify(String(s));
     const lines = [
       '# HELP mindtrust_http_requests_total Completed HTTP requests.',

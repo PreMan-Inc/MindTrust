@@ -39,6 +39,14 @@ async function fixture(t: TestContext) {
   mountBraintrustCompatibility(app, store, {
     authenticate,
     requireProject,
+    workspaceId() {
+      return 'legacy';
+    },
+    createProject(req, project) {
+      authenticate(req);
+      if (token(req) !== 'admin-fixture') throw new HttpError(403, 'Admin required');
+      return store.createProject(project, 'legacy');
+    },
     requireAdmin(req) {
       authenticate(req);
       if (token(req) !== 'admin-fixture') throw new HttpError(403, 'Admin required');

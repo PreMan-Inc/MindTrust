@@ -88,7 +88,7 @@ function WorkspaceApp() {
   const signOutAction = useAction();
   const [page, setPage] = useState(() => location.hash.slice(1) || 'overview');
   const [refresh, setRefresh] = useState(0);
-  const projectPreference = `mindtrust-project-${auth.session.principal.id}`;
+  const projectPreference = `mindtrust-project-${auth.session.principal.id}-${auth.session.principal.workspaceId}`;
   const [projectId, setProjectId] = useState(() => sessionStorage.getItem(projectPreference) || '');
   useEffect(() => {
     if (projectId) sessionStorage.setItem(projectPreference, projectId);
@@ -349,17 +349,19 @@ function WorkspaceApp() {
               >
                 <RefreshCw size={15} />
               </button>
-              {auth.status.enabled && (
-                <button
-                  className="icon-button"
-                  aria-label="Sign out"
-                  title="Sign out"
-                  disabled={signOutAction.busy}
-                  onClick={() => signOutAction.run(auth.signOut)}
-                >
-                  <LogOut size={15} />
-                </button>
-              )}
+              {auth.status.enabled &&
+                (auth.session.principal.kind !== 'user' ||
+                  auth.session.principal.authMethod !== 'preman') && (
+                  <button
+                    className="icon-button"
+                    aria-label="Sign out"
+                    title="Sign out"
+                    disabled={signOutAction.busy}
+                    onClick={() => signOutAction.run(auth.signOut)}
+                  >
+                    <LogOut size={15} />
+                  </button>
+                )}
             </div>
           </div>
           <main key={projectId} ref={contentRef} className="main-content" data-page={page}>

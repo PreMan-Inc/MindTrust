@@ -48,7 +48,11 @@ export function SettingsPage() {
   const action = useAction();
   const info = useData<ServerInfo>('/info', refresh);
   const projects = useData<Project[]>('/projects', refresh);
-  const tabs = canAdmin ? ['account', 'team', 'api keys', 'audit'] : ['account'];
+  const managed =
+    auth.session.principal.kind === 'user' && auth.session.principal.authMethod === 'preman';
+  const tabs = canAdmin
+    ? ['account', ...(!managed ? ['team'] : []), 'api keys', 'audit']
+    : ['account'];
   return (
     <>
       <PageHeader
@@ -111,13 +115,19 @@ export function SettingsPage() {
                 </div>
                 <div className="key-value">
                   <span>Access</span>
-                  <strong>{roleDescription[auth.session.principal.role]}</strong>
+                  <strong>
+                    {managed && auth.session.principal.role === 'admin'
+                      ? 'Manage projects, API keys, and audit records in this workspace. Membership is managed in PreMan.'
+                      : roleDescription[auth.session.principal.role]}
+                  </strong>
                   <span>Projects</span>
                   <strong>
                     {scopeLabel(auth.session.principal.projectIds, projects.data || [])}
                   </strong>
                   <span>Sign-in method</span>
-                  <strong>{credentialLabel(auth.session.principal.kind)}</strong>
+                  <strong>
+                    {managed ? 'Managed in PreMan' : credentialLabel(auth.session.principal.kind)}
+                  </strong>
                   <span>Session expires</span>
                   <strong>
                     {auth.session.expiresAt
@@ -127,7 +137,7 @@ export function SettingsPage() {
                         : 'Managed by credential expiry'}
                   </strong>
                 </div>
-                {auth.status.enabled && (
+                {auth.status.enabled && !managed && (
                   <Button disabled={action.busy} onClick={() => action.run(auth.signOut)}>
                     <LogOut size={14} />
                     Sign out of this browser
@@ -135,7 +145,7 @@ export function SettingsPage() {
                 )}
               </div>
             </Section>
-            {auth.session.principal.kind === 'user' && <ChangePassword />}
+            {auth.session.principal.kind === 'user' && !managed && <ChangePassword />}
           </div>
           <Section title="Workspace runtime" detail="One isolated workspace for your team.">
             <div className="runtime-details">
@@ -171,7 +181,7 @@ export function SettingsPage() {
           </Section>
         </div>
       )}
-      {tab === 'team' && canAdmin && <TeamPanel projects={projects.data || []} />}{' '}
+      {tab === 'team' && canAdmin && !managed && <TeamPanel projects={projects.data || []} />}{' '}
       {tab === 'api keys' && canAdmin && <KeysPanel projects={projects.data || []} />}{' '}
       {tab === 'audit' && canAdmin && <AuditPanel />}
     </>
@@ -207,7 +217,7 @@ export function RoleBadge({ role }: { role: WorkspaceRole }) {
   );
 }
 function scopeLabel(ids: string[] | null, projects: Project[]) {
-  if (ids === null) return 'All projects';
+  if (ids === null) return 'All projects in this workspace';
   if (!ids.length) return 'No projects assigned';
   return ids.map((id) => projects.find((p) => p.id === id)?.name || id).join(', ');
 }
@@ -360,10 +370,14 @@ function TeamPanel({ projects }: { projects: Project[] }) {
                         {user.disabled ? 'Disabled' : 'Active'}
                       </Badge>
                       {user.oidcLinked && <Badge>SSO linked</Badge>}
+                      {user.managedBy === 'preman' && <Badge>Managed in PreMan</Badge>}
                     </td>
                     <td>
                       <div className="row-actions">
-                        <Button onClick={() => setEditing(user)}>
+                        <Button
+                          disabled={user.managedBy === 'preman'}
+                          onClick={() => setEditing(user)}
+                        >
                           <Pencil size={12} />
                           Edit
                         </Button>
@@ -371,6 +385,7 @@ function TeamPanel({ projects }: { projects: Project[] }) {
                           className="icon-button"
                           aria-label={`Revoke sessions for ${user.name}`}
                           title="Revoke all browser sessions"
+                          disabled={user.managedBy === 'preman'}
                           onClick={() => setRevoking(user)}
                         >
                           <LogOut size={15} />
