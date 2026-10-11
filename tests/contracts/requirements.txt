@@ -1,2 +1,5 @@
 # Public upstream SDK used unmodified. Python >=3.10; CI uses Python 3.12.
 braintrust==0.45.0
+# Offline public-agent scorer contracts import the typed Decision output.
+# Keep this aligned with examples/agents/public/requirements.lock.txt.
+pydantic==2.14.0
