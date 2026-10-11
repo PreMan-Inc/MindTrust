@@ -675,7 +675,12 @@ function OverviewPage() {
                           <span>
                             <i
                               style={{
-                                background: ['#0d8d71', '#72b8a2', '#adcfc4', '#395c55'][i % 4],
+                                background: [
+                                  'var(--chart-1)',
+                                  'var(--chart-2)',
+                                  'var(--chart-3)',
+                                  'var(--chart-4)',
+                                ][i % 4],
                               }}
                             />
                             {m.model || 'Unspecified'}
@@ -686,7 +691,12 @@ function OverviewPage() {
                           <i
                             style={{
                               width: `${Math.max(2, (m.tokens / Math.max(1, data.totalTokens)) * 100)}%`,
-                              background: ['#0d8d71', '#72b8a2', '#adcfc4', '#395c55'][i % 4],
+                              background: [
+                                'var(--chart-1)',
+                                'var(--chart-2)',
+                                'var(--chart-3)',
+                                'var(--chart-4)',
+                              ][i % 4],
                             }}
                           />
                         </div>
@@ -813,7 +823,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
               x2={width}
               y1={y(max * v)}
               y2={y(max * v)}
-              stroke="#e9ece6"
+              stroke="var(--line)"
               strokeDasharray="3 4"
             />
             <text x="22" y={y(max * v) + 4} textAnchor="end" className="chart-label">
@@ -829,7 +839,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
               width={barWidth}
               height={Math.max(1, height - 15 - y(s.traces))}
               rx="3"
-              fill="#5eb59b"
+              fill="var(--chart-1)"
             >
               <title>
                 {s.date}: {s.traces} traces, {s.errors} errors
@@ -842,7 +852,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
                 width={barWidth}
                 height={height - 15 - y(s.errors)}
                 rx="2"
-                fill="#db7b82"
+                fill="var(--red)"
               />
             )}
             {(series.length < 10 || i % Math.ceil(series.length / 7) === 0) && (

@@ -1,5 +1,5 @@
 .obs-page {
-  --obs-soft: color-mix(in srgb, var(--surface) 94%, var(--text));
+  --obs-soft: var(--surface-subtle, color-mix(in srgb, var(--surface) 94%, var(--text)));
   --obs-hover: color-mix(in srgb, var(--surface) 97%, var(--accent));
   --obs-selected: color-mix(in srgb, var(--surface) 91%, var(--accent));
   --obs-danger-soft: color-mix(in srgb, var(--surface) 94%, var(--red));
@@ -103,11 +103,11 @@
   right: 0;
   z-index: 20;
   width: 190px;
-  background: var(--surface);
+  background: var(--surface-raised, var(--surface));
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
-  box-shadow: 0 10px 35px #11182716;
+  box-shadow: 0 12px 36px #0007;
 }
 .obs-view-menu strong {
   display: block;
@@ -158,7 +158,7 @@
   font-weight: 600;
 }
 .obs-status-switch button.error.active {
-  background: var(--obs-danger-soft, #fff0ef);
+  background: var(--obs-danger-soft, color-mix(in srgb, var(--red) 8%, var(--surface)));
   color: var(--red);
 }
 .obs-filter-meta {
@@ -340,7 +340,7 @@
 }
 .obs-run-symbol.error {
   color: var(--red);
-  background: var(--obs-danger-soft, #fff0ef);
+  background: var(--obs-danger-soft, color-mix(in srgb, var(--red) 8%, var(--surface)));
   border-color: color-mix(in srgb, var(--red) 17%, var(--line));
 }
 .obs-run-label {
@@ -477,7 +477,7 @@
   color: var(--muted);
 }
 .obs-inspector {
-  --obs-soft: color-mix(in srgb, var(--surface) 96%, var(--text));
+  --obs-soft: var(--surface-subtle, color-mix(in srgb, var(--surface) 96%, var(--text)));
   --obs-selected: color-mix(in srgb, var(--surface) 91%, var(--accent));
   --obs-danger-soft: color-mix(in srgb, var(--surface) 94%, var(--red));
   min-width: 0;
@@ -759,9 +759,9 @@
   flex-shrink: 0;
 }
 .obs-span-kind.llm {
-  color: #6c56aa;
-  background: color-mix(in srgb, var(--surface) 92%, #8b5cf6);
-  border-color: color-mix(in srgb, var(--line) 70%, #8b5cf6);
+  color: var(--purple);
+  background: color-mix(in srgb, var(--surface) 92%, var(--purple));
+  border-color: color-mix(in srgb, var(--line) 70%, var(--purple));
 }
 .obs-span-kind.agent {
   color: var(--accent);
@@ -1020,7 +1020,7 @@
 }
 .obs-json-number,
 .obs-json-boolean {
-  color: #7661bc;
+  color: var(--purple);
 }
 .obs-json-null {
   color: var(--muted);

@@ -1,8 +1,8 @@
 .eval-console {
-  --eval-soft: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  --eval-soft: var(--green-bg);
   --eval-positive: var(--accent);
-  --eval-negative: var(--red, #ce4c57);
-  --eval-warning: var(--amber, #a16a16);
+  --eval-negative: var(--red);
+  --eval-warning: var(--amber);
   min-width: 0;
 }
 .eval-console .page-header h1 {
