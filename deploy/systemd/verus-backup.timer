@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily verified Verus SQLite backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+Unit=verus-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+# Apply AFTER compose.production.yaml, only on the dedicated Verus host.
+# Install the Docker mount guard before starting this stack; see verus-lightsail.md.
+services:
+  mindtrust:
+    volumes:
+      - type: bind
+        source: /srv/verus-data/workspace
+        target: /app/data
+        bind:
+          create_host_path: false
+  proxy:
+    volumes:
+      - type: bind
+        source: /srv/verus-data/caddy-data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/verus-data/caddy-config
+        target: /config
+        bind:
+          create_host_path: false
