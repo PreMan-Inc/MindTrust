@@ -1230,7 +1230,7 @@ function CreateExperiment({
   onCreated: (e: Experiment) => void;
   initialDatasetId?: string;
 }) {
-  const { projectId, refresh, refreshAll, notify } = useWorkspace();
+  const { projectId, refresh, refreshAll, notify, navigate } = useWorkspace();
   const datasets = useData<Dataset[]>(`/datasets?${qs({ projectId })}`, refresh);
   const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
   const info = useData<ServerInfo>('/info');
@@ -1251,6 +1251,19 @@ function CreateExperiment({
       onClose={onClose}
       wide
     >
+      <p className="muted small-text">
+        Testing your own agent?{' '}
+        <button
+          type="button"
+          className="text-link"
+          onClick={() => {
+            onClose();
+            navigate('integrations');
+          }}
+        >
+          Connect agent code in Integrations → Agent evals
+        </button>
+      </p>
       <Form
         onSubmit={() =>
           action.run(async () => {

@@ -610,8 +610,12 @@ function OverviewPage() {
                 icon={<Waypoints size={17} />}
               />
               <Stat
-                label="Model spend"
-                value={money(data.knownCostUsd)}
+                label="Recorded model spend"
+                value={money(
+                  data.traceCount > 0 && data.unknownCostCount === data.traceCount
+                    ? null
+                    : data.knownCostUsd,
+                )}
                 detail={
                   data.unknownCostCount
                     ? `${data.unknownCostCount} runs have unknown cost`

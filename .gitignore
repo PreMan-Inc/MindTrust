@@ -14,3 +14,4 @@ playwright-report/
 __pycache__/
 *.pyc
 .venv/
+.local/

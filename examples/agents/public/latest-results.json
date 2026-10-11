@@ -1,0 +1,539 @@
+{
+  "executed_at": "2026-10-11T17:53:46.941Z",
+  "evidence_collected_at": "2026-10-11T17:57:45.846804+00:00",
+  "project_name": "Public agent evals \u00b7 20261011T175346Z",
+  "project_id": "460dea97-b402-48cd-990a-4dee41b41a6b",
+  "dataset_id": "c22f2afe-f406-4bbb-a990-ad52a1a128bf",
+  "dataset_version": 2,
+  "model": "claude-haiku-5-5",
+  "provider": "anthropic",
+  "real_model": true,
+  "synthetic_tools": true,
+  "cost_usd": null,
+  "runs": [
+    {
+      "framework": "langgraph",
+      "variant": "baseline",
+      "experiment_id": "964c70a1-e4af-4010-b3d9-04262b12a09e",
+      "experiment_name": "langgraph-baseline-20261011T175346Z",
+      "base_experiment_id": null,
+      "status": "completed",
+      "cases": 4,
+      "errors": [],
+      "scores": {
+        "CorrectDecision": 1,
+        "CorrectRate": 1,
+        "GroundedTools": 1
+      },
+      "llm_spans": 11,
+      "tool_spans": 11,
+      "input_tokens": 10810,
+      "output_tokens": 1145,
+      "duration_seconds": 10.839,
+      "duration_source": "persisted root-span start/end window",
+      "cost_usd": null,
+      "outcomes": [
+        {
+          "row_id": "billing-custom-policy",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 3,
+            "reason": "Error rate 3.0% exceeds the policy maximum of 1.5%. p95 latency of 240 ms is within the 300 ms limit, but the error-rate failure blocks the release.",
+            "service": "billing"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "cb5599b1-f0fc-4669-864f-466d03c2ebf9"
+        },
+        {
+          "row_id": "checkout-error-budget",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 2.3,
+            "reason": "Error rate 2.3% exceeds the policy maximum of 1.0%. p95 latency of 210 ms is within the 300 ms limit, but the error-rate check fails.",
+            "service": "checkout"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "ca35d963-6808-4d9b-8f56-22e5ebe1d164"
+        },
+        {
+          "row_id": "search-healthy",
+          "decision": {
+            "decision": "release",
+            "error_rate_pct": 0.4,
+            "reason": "Error rate 0.4% is within the 1.0% maximum, and p95 latency of 180 ms is within the 300 ms maximum.",
+            "service": "search"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "9756c56c-74cd-44b4-8d6b-70e887d9fa33"
+        },
+        {
+          "row_id": "unknown-service",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": null,
+            "reason": "Service not found in metrics or policy records, so no measured errors, requests, or limits are available to evaluate. No metrics were invented.",
+            "service": "unknown-service"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "02c74e29-0e9e-4c4c-86d5-8bc2d3d3abbf"
+        }
+      ]
+    },
+    {
+      "framework": "pydantic-ai",
+      "variant": "baseline",
+      "experiment_id": "f1b03bf0-f714-4e79-9544-48f0178080be",
+      "experiment_name": "pydantic-ai-baseline-20261011T175346Z",
+      "base_experiment_id": null,
+      "status": "completed",
+      "cases": 4,
+      "errors": [],
+      "scores": {
+        "CorrectDecision": 1,
+        "CorrectRate": 1,
+        "GroundedTools": 1
+      },
+      "llm_spans": 11,
+      "tool_spans": 11,
+      "input_tokens": 14360,
+      "output_tokens": 1233,
+      "duration_seconds": 9.778,
+      "duration_source": "persisted root-span start/end window",
+      "cost_usd": null,
+      "outcomes": [
+        {
+          "row_id": "billing-custom-policy",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 3,
+            "reason": "Error rate 3.0% exceeds policy maximum of 1.5%. p95 latency 240 ms is within the 300 ms limit. Release blocked on error rate.",
+            "service": "billing"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "87067b9a-5046-47d6-81b2-04b1606bcc40"
+        },
+        {
+          "row_id": "checkout-error-budget",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 2.3,
+            "reason": "Error rate 2.3% (23/1000) exceeds the policy maximum of 1.0%. p95 latency 210 ms is within the 300 ms limit. Blocked on error rate.",
+            "service": "checkout"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "e6783910-c6bf-4c37-8b25-2927792cadda"
+        },
+        {
+          "row_id": "search-healthy",
+          "decision": {
+            "decision": "release",
+            "error_rate_pct": 0.4,
+            "reason": "Error rate 0.4% (4 errors / 1000 requests) is within the 1.0% policy maximum; p95 latency 180 ms is within the 300 ms maximum. Both limits pass.",
+            "service": "search"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "73f15b91-6250-46ae-84a8-6323efea6cd8"
+        },
+        {
+          "row_id": "unknown-service",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": null,
+            "reason": "Service not found in metrics or release policy. No error rate or p95 latency could be evaluated, so no release decision can be made without manual review.",
+            "service": "unknown-service"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "cce2460e-bf67-48cc-85f8-a83e974cc6b2"
+        }
+      ]
+    },
+    {
+      "framework": "smolagents",
+      "variant": "baseline",
+      "experiment_id": "faa1de47-54b2-41d5-aa64-d7b4ee22144c",
+      "experiment_name": "smolagents-baseline-20261011T175346Z",
+      "base_experiment_id": null,
+      "status": "completed",
+      "cases": 4,
+      "errors": [],
+      "scores": {
+        "CorrectDecision": 1,
+        "CorrectRate": 1,
+        "GroundedTools": 1
+      },
+      "llm_spans": 11,
+      "tool_spans": 11,
+      "input_tokens": 29278,
+      "output_tokens": 1078,
+      "duration_seconds": 14.511,
+      "duration_source": "persisted root-span start/end window",
+      "cost_usd": null,
+      "outcomes": [
+        {
+          "row_id": "billing-custom-policy",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 3,
+            "reason": "Measured error rate 3.0% exceeds the policy maximum of 1.5%. p95 latency of 240 ms is within the 300 ms limit, but the error rate check fails, so the release is blocked.",
+            "service": "billing"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "c8704b80-6e25-417e-8704-ba1d9a9dddc7"
+        },
+        {
+          "row_id": "checkout-error-budget",
+          "decision": {
+            "decision": "block",
+            "error_rate_pct": 2.3,
+            "reason": "Measured error rate of 2.3% exceeds the policy maximum of 1.0%. The p95 latency of 210 ms is within the 300 ms limit, but the error rate check fails, so the release is blocked.",
+            "service": "checkout"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "da8d870a-ad97-4a1a-839e-41f59d796bd6"
+        },
+        {
+          "row_id": "search-healthy",
+          "decision": {
+            "decision": "release",
+            "error_rate_pct": 0.4,
+            "reason": "Measured error rate 0.4% is within the 1.0% maximum, and p95 latency of 180 ms is within the 300 ms maximum. Both limits pass.",
+            "service": "search"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "483f0fdf-7a0e-4241-8d64-45eb2176a8d4"
+        },
+        {
+          "row_id": "unknown-service",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": null,
+            "reason": "Service not found in release metrics or release policy; no metrics were invented and no release decision can be made.",
+            "service": "unknown-service"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "59276f27-057a-4e52-8c1b-26e490dd74f0"
+        }
+      ]
+    },
+    {
+      "framework": "langgraph",
+      "variant": "fraction-regression",
+      "experiment_id": "6b79da97-573b-4db3-ab1d-73059cfd7186",
+      "experiment_name": "langgraph-fraction-regression-20261011T175346Z",
+      "base_experiment_id": "964c70a1-e4af-4010-b3d9-04262b12a09e",
+      "status": "completed",
+      "cases": 4,
+      "errors": [],
+      "scores": {
+        "CorrectDecision": 0.5,
+        "CorrectRate": 0.25,
+        "GroundedTools": 1
+      },
+      "llm_spans": 12,
+      "tool_spans": 12,
+      "input_tokens": 12397,
+      "output_tokens": 2949,
+      "duration_seconds": 20.117,
+      "duration_source": "persisted root-span start/end window",
+      "cost_usd": null,
+      "outcomes": [
+        {
+          "row_id": "billing-custom-policy",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": 0.03,
+            "reason": "The calculator returned 0.03% for 3 errors in 100 requests, but that is 3%, which exceeds the 1.5% policy maximum. The p95 of 240 ms is within the 300 ms limit. The calculator result conflicts with its inputs, so it should be verified before a release decision.",
+            "service": "billing"
+          },
+          "scores": {
+            "CorrectDecision": 0,
+            "CorrectRate": 0,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "18e14696-4e16-4400-87e3-2f61badde0af"
+        },
+        {
+          "row_id": "checkout-error-budget",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": null,
+            "reason": "The calculator returned 0.023% for 23 errors in 1000 requests on two identical runs, but that is off by a factor of 100. The correct rate is 2.3%, which exceeds the 1.0% policy maximum, so release is not supported. p95 latency of 210 ms is within the 300 ms limit. The calculator output needs to be fixed or verified before a final decision.",
+            "service": "checkout"
+          },
+          "scores": {
+            "CorrectDecision": 0,
+            "CorrectRate": 0,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "6e1b162f-834c-446d-89b4-6128390bec5d"
+        },
+        {
+          "row_id": "search-healthy",
+          "decision": {
+            "decision": "release",
+            "error_rate_pct": 0.004,
+            "reason": "Error rate 0.004% is within the 1.0% maximum and p95 180 ms is within the 300 ms maximum. Note: the calculator returned 0.004, but 4 errors in 1000 requests is 0.4%. The decision is unchanged either way, but the calculator output should be checked.",
+            "service": "search"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 0,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "2f9e6aab-e843-4651-8fb6-160239a5cdba"
+        },
+        {
+          "row_id": "unknown-service",
+          "decision": {
+            "decision": "needs_review",
+            "error_rate_pct": null,
+            "reason": "Service not found in either the release metrics or the release policy, so no measured errors, requests, p95 latency, or policy limits are available. The calculator was not run and no metrics were invented.",
+            "service": "unknown-service"
+          },
+          "scores": {
+            "CorrectDecision": 1,
+            "CorrectRate": 1,
+            "GroundedTools": 1
+          },
+          "error": null,
+          "trace_id": "a1c3079d-6de4-4bab-87d5-4d7131a387f4"
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "scores": {
+      "CorrectDecision": {
+        "name": "CorrectDecision",
+        "score": 0.5,
+        "improvements": 0,
+        "regressions": 2,
+        "diff": -0.5
+      },
+      "CorrectRate": {
+        "name": "CorrectRate",
+        "score": 0.25,
+        "improvements": 0,
+        "regressions": 3,
+        "diff": -0.75
+      },
+      "GroundedTools": {
+        "name": "GroundedTools",
+        "score": 1,
+        "improvements": 0,
+        "regressions": 0,
+        "diff": 0
+      }
+    },
+    "metrics": {
+      "latency": {
+        "name": "latency",
+        "metric": 5.029,
+        "unit": "s",
+        "improvements": 0,
+        "regressions": 4,
+        "diff": 2.31925
+      }
+    }
+  },
+  "packages": {
+    "braintrust": "0.45.0",
+    "langgraph": "1.2.1",
+    "langchain-anthropic": "1.2.0",
+    "pydantic-ai-slim": "1.100.0",
+    "smolagents": "1.22.0",
+    "litellm": "1.81.16"
+  },
+  "limits": {
+    "max_model_requests_per_case": 6,
+    "max_output_tokens_per_request": 800,
+    "max_tool_calls_per_case": 12,
+    "max_concurrency": 1
+  },
+  "integration_findings": [
+    {
+      "finding": "Claude Haiku 5.5 rejects temperature parameter",
+      "first_attempt_project_id": "4364d768-2c02-424e-94db-de483264de42",
+      "failed_cases": 4,
+      "resolution": "Remove temperature for this provider/model. The successful suite used the supported request shape."
+    },
+    {
+      "finding": "Braintrust SDK comparison summary originally returned HTTP501 and control remained running",
+      "resolution": "Implemented and contract-tested complete aligned comparison summaries; re-summarized persisted control through unmodified official Python SDK without new model calls."
+    }
+  ],
+  "followup_verification": {
+    "executed_at": "2026-10-11T17:56:32.813094+00:00",
+    "project_name": "Public agent evals \u00b7 20261011T175621Z",
+    "project_id": "7f448771-180d-4354-9468-28aa9e09186e",
+    "dataset_id": "a4e59bd6-469e-476a-b3cd-c6ba5f8eee68",
+    "dataset_version": "00000000000000000002",
+    "model": "claude-haiku-5-5",
+    "provider": "anthropic",
+    "real_model": true,
+    "synthetic_tools": true,
+    "cost_usd": null,
+    "runs": [
+      {
+        "framework": "pydantic-ai",
+        "variant": "baseline",
+        "experiment_id": "94d0587f-87bb-49ed-b398-0920fec0e1f8",
+        "experiment_name": "pydantic-ai-baseline-20261011T175621Z",
+        "base_experiment_name": null,
+        "status": "completed",
+        "cases": 4,
+        "errors": [],
+        "scores": {
+          "CorrectDecision": 1,
+          "CorrectRate": 1,
+          "GroundedTools": 1
+        },
+        "llm_spans": 11,
+        "tool_spans": 11,
+        "input_tokens": 14360,
+        "output_tokens": 1257,
+        "duration_seconds": 10.743,
+        "cost_usd": null,
+        "outcomes": [
+          {
+            "row_id": "billing-custom-policy",
+            "decision": {
+              "decision": "block",
+              "error_rate_pct": 3,
+              "reason": "Error rate 3.0% exceeds the policy maximum of 1.5%. p95 latency 240 ms is within the 300 ms limit, but the error-rate limit fails, so the release is blocked.",
+              "service": "billing"
+            },
+            "scores": {
+              "CorrectDecision": 1,
+              "CorrectRate": 1,
+              "GroundedTools": 1
+            },
+            "error": null
+          },
+          {
+            "row_id": "checkout-error-budget",
+            "decision": {
+              "decision": "block",
+              "error_rate_pct": 2.3,
+              "reason": "Error rate 2.3% (23/1000) exceeds the policy maximum of 1.0%. p95 latency of 210 ms is within the 300 ms limit, but the error-rate check fails, so the release is blocked.",
+              "service": "checkout"
+            },
+            "scores": {
+              "CorrectDecision": 1,
+              "CorrectRate": 1,
+              "GroundedTools": 1
+            },
+            "error": null
+          },
+          {
+            "row_id": "search-healthy",
+            "decision": {
+              "decision": "release",
+              "error_rate_pct": 0.4,
+              "reason": "Error rate 0.4% (4/1000, calculator-verified) is within the 1.0% maximum; p95 latency 180 ms is within the 300 ms maximum. Both limits pass.",
+              "service": "search"
+            },
+            "scores": {
+              "CorrectDecision": 1,
+              "CorrectRate": 1,
+              "GroundedTools": 1
+            },
+            "error": null
+          },
+          {
+            "row_id": "unknown-service",
+            "decision": {
+              "decision": "needs_review",
+              "error_rate_pct": null,
+              "reason": "Service not found: neither release metrics nor release policy exist for unknown-service. No error rate or p95 latency was calculated, and no metrics were invented.",
+              "service": "unknown-service"
+            },
+            "scores": {
+              "CorrectDecision": 1,
+              "CorrectRate": 1,
+              "GroundedTools": 1
+            },
+            "error": null
+          }
+        ]
+      }
+    ],
+    "packages": {
+      "braintrust": "0.45.0",
+      "langgraph": "1.2.1",
+      "langchain-anthropic": "1.2.0",
+      "pydantic-ai-slim": "1.100.0",
+      "smolagents": "1.22.0",
+      "litellm": "1.81.16"
+    },
+    "limits": {
+      "max_model_requests_per_case": 6,
+      "max_output_tokens_per_request": 800,
+      "max_tool_calls_per_case": 12,
+      "max_concurrency": 1
+    }
+  }
+}

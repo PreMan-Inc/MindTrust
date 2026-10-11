@@ -252,6 +252,205 @@ test('official Eval runs real local tasks and scorers against a pinned dataset i
   );
 });
 
+test('official Eval compares a named baseline using matched pinned dataset cases', async (t) => {
+  const f = await fixture(t);
+  const ds = initDataset({ project: 'Allowed', dataset: 'comparison-inputs', state: f.state });
+  ds.insert({ id: 'a', input: 0, expected: 1 });
+  ds.insert({ id: 'b', input: 1, expected: 1 });
+  await ds.flush();
+  const run = (name: string, candidate = false) =>
+    Eval(
+      'Allowed',
+      {
+        experimentName: name,
+        state: f.state,
+        data: ds,
+        ...(candidate ? { baseExperimentName: 'comparison-baseline' } : {}),
+        task: async (input: number) => (candidate ? 1 : input),
+        scores: [
+          function Quality({ output }: { output: number }) {
+            return output;
+          },
+        ],
+      },
+      {
+        progress: { start() {}, stop() {}, increment() {} },
+        reporter: {
+          name: 'silent',
+          reportEval() {},
+          reportRun() {
+            return true;
+          },
+        },
+      },
+    );
+  await run('comparison-baseline');
+  const result = await run('comparison-candidate', true);
+  assert.deepEqual(result.summary.scores.Quality, {
+    name: 'Quality',
+    score: 1,
+    diff: 0.5,
+    improvements: 1,
+    regressions: 0,
+  });
+  assert.equal(
+    f.store
+      .list<Experiment>('experiment', f.allowed)
+      .find((e) => e.name === 'comparison-candidate')!.status,
+    'completed',
+  );
+  assert.deepEqual(f.flushErrors, []);
+  assert(!f.network.some((r) => r.status === 501));
+});
+
+test('comparison summaries use aligned valid scores and latency; incomplete or incompatible runs fail explicitly', async (t) => {
+  const f = await fixture(t);
+  const registration = await (
+    await f.request('/api/dataset/register', {
+      project_id: f.allowed,
+      dataset_name: 'comparison-contract',
+    })
+  ).json();
+  const datasetId = registration.dataset.id;
+  assert.equal(
+    (
+      await f.request('/logs3', {
+        rows: ['a', 'b', 'c'].map((id) => ({ id, dataset_id: datasetId, input: id, expected: id })),
+        api_version: 2,
+      })
+    ).status,
+    200,
+  );
+  const version = f.store.require<Dataset>('dataset', datasetId).version;
+  const createRun = async (
+    name: string,
+    values: { quality?: number | null; nullable?: number | null; end?: number; error?: string }[],
+    pinnedVersion = version,
+  ) => {
+    const result = await f.request('/api/experiment/register', {
+      project_id: f.allowed,
+      experiment_name: name,
+      dataset_id: datasetId,
+      dataset_version: String(pinnedVersion),
+    });
+    assert.equal(result.status, 200);
+    const id = (await result.json()).experiment.id;
+    if (values.length) {
+      const write = await f.request('/logs3', {
+        api_version: 2,
+        rows: values.map((value, index) => ({
+          id: `${name}-${index}`,
+          experiment_id: id,
+          span_id: `${name}-span-${index}`,
+          root_span_id: `${name}-span-${index}`,
+          dataset_record_id: ['a', 'b', 'c'][index],
+          input: ['a', 'b', 'c'][index],
+          expected: ['a', 'b', 'c'][index],
+          output: index,
+          scores: { quality: value.quality ?? null, nullable: value.nullable ?? null },
+          metrics: { start: 1000, ...(value.end === undefined ? {} : { end: 1000 + value.end }) },
+          ...(value.error ? { error: value.error } : {}),
+        })),
+      });
+      assert.equal(write.status, 200, await write.text());
+    }
+    return id;
+  };
+  const baseline = await createRun('aligned-baseline', [
+    { quality: 0, nullable: 1, end: 1 },
+    { quality: 0.5, nullable: null, end: 2 },
+    { quality: 1, nullable: 0, end: 3 },
+  ]);
+  const candidate = await createRun('aligned-candidate', [
+    { quality: 1, nullable: 0, end: 0.5 },
+    { quality: 0.25, nullable: 1, end: 3 },
+    { quality: 1, nullable: null, end: 3 },
+  ]);
+  const compare = (id: string, base = baseline) =>
+    f.request(
+      `/v1/experiment/${id}/summarize?summarize_scores=true&comparison_experiment_id=${base}`,
+    );
+  const response = await compare(candidate);
+  assert.equal(response.status, 200);
+  const summary = await response.json();
+  assert.deepEqual(summary.scores.quality, {
+    name: 'quality',
+    score: 0.75,
+    diff: 0.25,
+    improvements: 1,
+    regressions: 1,
+  });
+  assert.deepEqual(summary.scores.nullable, {
+    name: 'nullable',
+    score: 0,
+    diff: -1,
+    improvements: 0,
+    regressions: 1,
+  });
+  assert(Math.abs(summary.metrics.latency.metric - 6.5 / 3) < 1e-10);
+  assert(Math.abs(summary.metrics.latency.diff - 0.5 / 3) < 1e-10);
+  assert.equal(summary.metrics.latency.improvements, 1);
+  assert.equal(summary.metrics.latency.regressions, 1);
+  assert.equal(f.store.require<Experiment>('experiment', candidate).status, 'completed');
+  const missing = await createRun('missing-case', [
+    { quality: 1, end: 1 },
+    { quality: 1, end: 1 },
+  ]);
+  assert.equal((await compare(missing)).status, 409);
+  assert.equal(f.store.require<Experiment>('experiment', missing).status, 'running');
+  const unfinished = await createRun('unfinished-case', [
+    { quality: 1, end: 1 },
+    { quality: 1, end: 1 },
+    { quality: 1 },
+  ]);
+  assert.equal((await compare(unfinished)).status, 409);
+  const failed = await createRun(
+    'failed-cases',
+    ['a', 'b', 'c'].map(() => ({ quality: 1, end: 1, error: 'Synthetic task failure' })),
+  );
+  const failedSummary = await compare(failed);
+  assert.equal(failedSummary.status, 200);
+  assert.deepEqual(await failedSummary.json(), { scores: {}, metrics: {} });
+  assert.equal(f.store.require<Experiment>('experiment', failed).status, 'failed');
+  assert.equal(
+    (
+      await f.request('/logs3', {
+        api_version: 2,
+        rows: [
+          {
+            id: 'a',
+            dataset_id: datasetId,
+            input: 'a',
+            expected: 'a',
+            metadata: { updated: true },
+          },
+        ],
+      })
+    ).status,
+    200,
+  );
+  const changed = await createRun(
+    'changed-revision',
+    [
+      { quality: 1, end: 1 },
+      { quality: 1, end: 1 },
+      { quality: 1, end: 1 },
+    ],
+    f.store.require<Dataset>('dataset', datasetId).version,
+  );
+  assert.equal((await compare(changed)).status, 409);
+  assert.equal(
+    (
+      await f.request(
+        `/v1/experiment/${candidate}/summarize?comparison_experiment_id=${baseline}`,
+        undefined,
+        'invalid',
+      )
+    ).status,
+    401,
+  );
+});
+
 test('writes are atomic/idempotent; merge paths replace objects; unsupported controls fail explicitly', async (t) => {
   const f = await fixture(t);
   const registration = await f.request('/api/dataset/register', {

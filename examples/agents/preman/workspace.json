@@ -1,0 +1,33 @@
+{
+  "requests": [
+    {
+      "id": "health",
+      "name": "GET /health",
+      "method": "GET",
+      "url": "https://synthetic.invalid/health",
+      "risk": "read"
+    },
+    {
+      "id": "orders-summary",
+      "name": "GET /orders/summary",
+      "method": "GET",
+      "url": "https://synthetic.invalid/orders/summary",
+      "risk": "read"
+    },
+    {
+      "id": "invoices",
+      "name": "POST /invoices",
+      "method": "POST",
+      "url": "https://synthetic.invalid/invoices",
+      "risk": "write"
+    }
+  ],
+  "latestRuns": {
+    "health": { "status": "passed", "response_status": 200 },
+    "orders-summary": {
+      "status": "failed",
+      "response_status": 503,
+      "error": "Synthetic service unavailable"
+    }
+  }
+}

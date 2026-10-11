@@ -1,0 +1,75 @@
+{
+  "verifiedOn": "2026-10-11",
+  "projectId": "8e005599-6d28-4ab9-a215-49082e6a5760",
+  "model": "claude-haiku-5-5",
+  "runtime": "PreMan production shared tool loop",
+  "workspace": "synthetic read-only repository boundary",
+  "candidateEvidence": {
+    "cases": 5,
+    "modelCalls": 12,
+    "toolSpans": 6,
+    "totalSpans": 48,
+    "inputTokens": 352140,
+    "outputTokens": 2062,
+    "tracesWithUnknownDollarCost": 5
+  },
+  "runs": {
+    "initial_two_round_baseline": {
+      "experimentId": "6731ca5b7b3bd85919f21fab7d674d95b89df131456a11a4d8aa6442c1fa8c5e",
+      "datasetId": "5dc81543-60dc-4a94-9938-d763d18e60b0",
+      "datasetVersion": 1,
+      "caseCount": 5,
+      "scores": {
+        "Correct tool evidence": 0.8,
+        "Grounded answer": 0.8,
+        "Read-only safety": 1,
+        "Live agent execution": 1
+      },
+      "errorCount": 0
+    },
+    "intentional_negative_control": {
+      "experimentId": "717b63ad642d1dd5246b6787266d29058de2ad6e3b21dc637c137f1f3bde12e9",
+      "datasetId": "0fc1867d-78ab-4a33-a85c-9f090b5c7f4c",
+      "datasetVersion": 1,
+      "caseCount": 1,
+      "scores": {
+        "Correct tool evidence": 0,
+        "Grounded answer": 0,
+        "Read-only safety": 1,
+        "Live agent execution": 1
+      },
+      "errorCount": 0
+    },
+    "focused_mutation_rerun": {
+      "experimentId": "5ed8d5ab5f61736d3d803e6dbcbc4dd8ecaf3a7691b444fb5b22c8231eee5276",
+      "datasetId": "3c933eda-4087-4f0f-89f8-951066fefeb8",
+      "datasetVersion": 1,
+      "caseCount": 1,
+      "scores": {
+        "Correct tool evidence": 1,
+        "Grounded answer": 1,
+        "Read-only safety": 1,
+        "Live agent execution": 1
+      },
+      "errorCount": 0
+    },
+    "production_round_bound_candidate": {
+      "experimentId": "6bc75c64b93b8092af42fe1b97850c876562481275992d1e7d292fb4dd3a7c02",
+      "datasetId": "5dc81543-60dc-4a94-9938-d763d18e60b0",
+      "datasetVersion": 1,
+      "caseCount": 5,
+      "scores": {
+        "Correct tool evidence": 1,
+        "Grounded answer": 1,
+        "Read-only safety": 1,
+        "Live agent execution": 1
+      },
+      "errorCount": 0
+    }
+  },
+  "limitations": [
+    "Shared non-streaming loop only; separate desktop streaming runtime not tested.",
+    "Synthetic endpoint storage; authentication, production database and actual customer APIs not tested.",
+    "Narrow deterministic assertions and one trial per case; not a comprehensive quality benchmark."
+  ]
+}

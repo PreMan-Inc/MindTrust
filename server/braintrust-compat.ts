@@ -1106,23 +1106,168 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
   });
   function summarizeExperiment(req: Request, id: string, comparison?: unknown) {
     const t = target(req, 'experiment', id, 'read');
-    if (comparison != null) {
-      target(req, 'experiment', str(comparison, 'comparison_experiment_id'), 'read');
-      unsupported(
-        'server-side baseline summaries; compare exported cases with verified scorer definitions',
-      );
-    }
     const e = store.require<Experiment>('experiment', t.id),
       cases = store.list<EvalCase>('case', t.projectId, t.id);
     const summary = aggregateExperiment(e, cases);
-    const rootRows = rows(t).filter(
-      (r) => !r.comment && (!Array.isArray(r.span_parents) || !r.span_parents.length),
-    );
-    if (
-      rootRows.length &&
-      rootRows.every((r) => record(r.metrics) && typeof r.metrics.end === 'number')
-    )
-      store.put('experiment', { ...summary, status: 'completed', finishedAt: now() }, t.projectId);
+    const pairKey = (c: EvalCase) => JSON.stringify([c.rowId, c.trial]);
+    const complete = (resource: Target, experiment: Experiment, values: EvalCase[]) => {
+      const pinned = store.experimentSnapshot(experiment.id).rows;
+      const pairs = new Set(values.map(pairKey));
+      if (
+        !pinned.length ||
+        values.length !== pinned.length * experiment.trials ||
+        pairs.size !== values.length
+      )
+        return false;
+      for (const row of pinned)
+        for (let trial = 1; trial <= experiment.trials; trial++)
+          if (!pairs.has(JSON.stringify([row.id, trial]))) return false;
+      const roots = rows(resource).filter(
+        (r) => !r.comment && (!Array.isArray(r.span_parents) || !r.span_parents.length),
+      );
+      if (!roots.length) return ['completed', 'failed'].includes(experiment.status);
+      return (
+        roots.length === values.length &&
+        roots.every(
+          (r) =>
+            record(r.metrics) &&
+            typeof r.metrics.start === 'number' &&
+            Number.isFinite(r.metrics.start) &&
+            typeof r.metrics.end === 'number' &&
+            Number.isFinite(r.metrics.end) &&
+            r.metrics.end >= r.metrics.start,
+        )
+      );
+    };
+    const finalize = (resource: Target, experiment: Experiment, values: EvalCase[]) => {
+      if (!complete(resource, experiment, values) || experiment.status === 'cancelled') return;
+      const allFailed = values.every((c) => !!c.error);
+      store.put(
+        'experiment',
+        {
+          ...aggregateExperiment(experiment, values),
+          status: allFailed ? 'failed' : 'completed',
+          error: allFailed ? 'All evaluation cases failed; inspect the case errors.' : null,
+          finishedAt: experiment.finishedAt ?? now(),
+        },
+        resource.projectId,
+      );
+    };
+    if (comparison != null) {
+      const baselineTarget = target(
+        req,
+        'experiment',
+        str(comparison, 'comparison_experiment_id'),
+        'read',
+      );
+      const baseline = store.require<Experiment>('experiment', baselineTarget.id);
+      if (
+        baseline.projectId !== e.projectId ||
+        baseline.datasetId !== e.datasetId ||
+        baseline.datasetVersion !== e.datasetVersion
+      )
+        throw new HttpError(
+          409,
+          'Comparison requires the same project, dataset and pinned dataset revision',
+        );
+      const baselineCases = store.list<EvalCase>(
+        'case',
+        baselineTarget.projectId,
+        baselineTarget.id,
+      );
+      const baselineByPair = new Map(baselineCases.map((c) => [pairKey(c), c]));
+      if (
+        !complete(t, e, cases) ||
+        !complete(baselineTarget, baseline, baselineCases) ||
+        e.status === 'cancelled' ||
+        baseline.status === 'cancelled' ||
+        cases.length !== baselineCases.length ||
+        cases.some((c) => !baselineByPair.has(pairKey(c)))
+      )
+        throw new HttpError(
+          409,
+          'Comparison requires complete matching dataset rows and trials with finished root spans',
+        );
+      const paired = cases.map((candidate) => ({
+        candidate,
+        baseline: baselineByPair.get(pairKey(candidate))!,
+      }));
+      const names = new Set(
+        paired.flatMap(({ candidate, baseline }) => [
+          ...Object.keys(candidate.scores),
+          ...Object.keys(baseline.scores),
+        ]),
+      );
+      const scores: Record<
+        string,
+        { name: string; score: number; diff: number; improvements: number; regressions: number }
+      > = {};
+      const mean = (values: number[]) =>
+        values.reduce((sum, value) => sum + value, 0) / values.length;
+      const validScore = (value: unknown): value is number =>
+        typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+      for (const name of names) {
+        // Missing/failed scores never become zero or contribute an unmatched delta.
+        const values = paired
+          .filter(
+            ({ candidate, baseline }) =>
+              !candidate.error &&
+              !baseline.error &&
+              !candidate.scoreErrors[name] &&
+              !baseline.scoreErrors[name] &&
+              validScore(candidate.scores[name]) &&
+              validScore(baseline.scores[name]),
+          )
+          .map(({ candidate, baseline }) => ({
+            current: candidate.scores[name]!,
+            previous: baseline.scores[name]!,
+          }));
+        if (!values.length) continue;
+        scores[name] = {
+          name,
+          score: mean(values.map((v) => v.current)),
+          diff: mean(values.map((v) => v.current - v.previous)),
+          improvements: values.filter((v) => v.current > v.previous).length,
+          regressions: values.filter((v) => v.current < v.previous).length,
+        };
+      }
+      const latencies = paired.filter(
+        ({ candidate, baseline }) =>
+          !candidate.error &&
+          !baseline.error &&
+          Number.isFinite(candidate.latencyMs) &&
+          candidate.latencyMs >= 0 &&
+          Number.isFinite(baseline.latencyMs) &&
+          baseline.latencyMs >= 0,
+      );
+      finalize(t, e, cases);
+      finalize(baselineTarget, baseline, baselineCases);
+      return {
+        scores,
+        metrics: latencies.length
+          ? {
+              latency: {
+                name: 'latency',
+                unit: 's',
+                metric: mean(latencies.map(({ candidate }) => candidate.latencyMs)) / 1000,
+                diff:
+                  mean(
+                    latencies.map(
+                      ({ candidate, baseline }) => candidate.latencyMs - baseline.latencyMs,
+                    ),
+                  ) / 1000,
+                improvements: latencies.filter(
+                  ({ candidate, baseline }) => candidate.latencyMs < baseline.latencyMs,
+                ).length,
+                regressions: latencies.filter(
+                  ({ candidate, baseline }) => candidate.latencyMs > baseline.latencyMs,
+                ).length,
+              },
+            }
+          : {},
+      };
+    }
+    finalize(t, e, cases);
     return {
       scores: Object.fromEntries(
         Object.entries(summary.scores)

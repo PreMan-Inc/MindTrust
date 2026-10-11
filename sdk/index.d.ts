@@ -1,5 +1,14 @@
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Meta = Record<string, Json>;
+export interface CompletedSpan extends SpanOptions {
+  id: string;
+  parentId?: string | null;
+  name: string;
+  status?: 'ok' | 'error';
+  startTime: string;
+  endTime: string;
+  output?: Json;
+}
 export interface SpanOptions {
   input?: Json;
   kind?: 'agent' | 'llm' | 'tool' | 'retrieval' | 'function';
@@ -13,6 +22,8 @@ export interface SpanOptions {
 export interface SpanHandle {
   id: string;
   traceId: string;
+  /** Attach a complete span tree from Python or another runtime; IDs are remapped. */
+  addSpans(spans: CompletedSpan[]): void;
   update(fields: Partial<SpanOptions> & { output?: Json; status?: 'ok' | 'error' }): void;
   trace<T>(
     name: string,
@@ -28,6 +39,9 @@ export interface Scorer {
     output: Json;
     expected: Json | undefined;
     metadata: Meta;
+    /** Supplied by evaluate; optional for direct calls to a scorer. */
+    span?: SpanHandle;
+    signal?: AbortSignal;
   }): number | Promise<number>;
 }
 export class MindTrust {
@@ -50,6 +64,7 @@ export class MindTrust {
   ): Promise<T>;
   trace<T>(name: string, task: (span: SpanHandle) => T | Promise<T>): Promise<T>;
   flush(): Promise<void>;
+  importEvaluation(checkpoint: Record<string, any>): Promise<any>;
   createDataset(options: {
     name: string;
     description?: string;
@@ -71,13 +86,47 @@ export class MindTrust {
     datasetVersion?: number;
     task: (
       input: Json,
-      context: { metadata: Meta; trial: number; span: SpanHandle },
+      context: {
+        metadata: Meta;
+        trial: number;
+        rowId: string;
+        span: SpanHandle;
+        signal: AbortSignal;
+      },
     ) => Json | Promise<Json>;
     scorers?: Scorer[];
     trials?: number;
     concurrency?: number;
     description?: string;
+    signal?: AbortSignal;
+    /** In-process callbacks must honor signal to stop side effects. */
+    caseTimeoutMs?: number;
+    scorerTimeoutMs?: number;
+    runId?: string;
+    /** Serialized before trace batches and final delivery; includes completed cases and undelivered traces. */
+    onCheckpoint?: (payload: Record<string, any>) => void | Promise<void>;
   }): Promise<any>;
 }
+/** Execute trusted local code with bounded I/O and process-group termination on POSIX. Not a security sandbox. */
+export function processTask(options: {
+  command: string;
+  args?: string[];
+  cwd?: string;
+  /** Only basic OS variables are inherited; provide credentials explicitly. */
+  env?: Record<string, string>;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}): (
+  input: Json,
+  context: { metadata: Meta; trial: number; span: SpanHandle; signal: AbortSignal },
+) => Promise<Json>;
 /** Builtins match the backend: missing expected scores 0; Contains stringifies JSON; Valid JSON accepts objects/arrays or parseable JSON text. */
-export const scorers: { exactMatch: Scorer; contains: Scorer; jsonValid: Scorer };
+type BuiltinScorer = {
+  name: string;
+  score(args: Omit<Parameters<Scorer['score']>[0], 'span' | 'signal'>): number;
+};
+export const scorers: {
+  exactMatch: BuiltinScorer;
+  contains: BuiltinScorer;
+  jsonValid: BuiltinScorer;
+};

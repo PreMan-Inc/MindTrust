@@ -11,7 +11,7 @@ export function integrationBaseUrl() {
 export function IntegrationsPage() {
   const { projectId, project, refresh, navigate } = useWorkspace();
   const { canAdmin } = usePermissions();
-  const [tab, setTab] = useState('braintrust');
+  const [tab, setTab] = useState('agents');
   const [importing, setImporting] = useState(false);
   const datasets = useData<Dataset[]>(projectId ? `/datasets?${qs({ projectId })}` : null, refresh);
   const base = integrationBaseUrl();
@@ -46,6 +46,7 @@ export function IntegrationsPage() {
       />
       <div className="tabs settings-tabs" role="tablist" aria-label="Integration options">
         {[
+          { id: 'agents', name: 'Agent evals' },
           { id: 'braintrust', name: 'Braintrust' },
           { id: 'native', name: 'SDK & API' },
           { id: 'otel', name: 'OpenTelemetry' },
@@ -61,6 +62,7 @@ export function IntegrationsPage() {
           </button>
         ))}
       </div>
+      {tab === 'agents' && <AgentEvaluationSetup baseUrl={base} projectId={projectId || ''} />}
       {tab === 'braintrust' && (
         <BraintrustCompatibility baseUrl={base} projectName={project?.name || ''} />
       )}
@@ -99,6 +101,72 @@ export function IntegrationsPage() {
         <DatasetMigration datasets={datasets.data || []} onClose={() => setImporting(false)} />
       )}
     </>
+  );
+}
+function AgentEvaluationSetup({ baseUrl, projectId }: { baseUrl: string; projectId: string }) {
+  const { navigate } = useWorkspace();
+  const example = `import { MindTrust, processTask } from './sdk/index.mjs';
+
+const client = new MindTrust({
+  baseUrl: ${JSON.stringify(baseUrl)},
+  projectId: ${JSON.stringify(projectId || '<project-id>')},
+  apiKey: process.env.MINDTRUST_API_KEY,
+});
+
+await client.evaluate({
+  name: 'Agent regression',
+  datasetId: '<dataset-id>',
+  concurrency: 2,
+  caseTimeoutMs: 120_000,
+  task: processTask({
+    command: 'python3', args: ['agent.py'],
+    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+  }),
+  scorers: [{
+    name: 'Expected outcome',
+    score: ({ output, expected }) => Number(output.outcome === expected.outcome),
+  }],
+});`;
+  return (
+    <Section
+      title="Run your agent"
+      detail="Execute agent code in your environment. Inspect its results here."
+    >
+      <div className="integration-section-body">
+        <p className="integration-paragraph">
+          Evaluate JavaScript functions directly, or connect a Python agent with the process runner.
+          Each case records tool calls, model usage, output and scores against a pinned dataset.
+        </p>
+        <CodeSnippet code={example} label="agent evaluation" />
+        <details className="compact-disclosure">
+          <summary>Python adapter contract</summary>
+          <p className="muted small-text">
+            Read one JSON request from stdin with input, metadata and trial. Return one JSON object
+            on stdout with output and optional completed spans. Send diagnostics to stderr. Pass
+            credentials explicitly; trusted local code runs with your operating system permissions.
+          </p>
+        </details>
+        <details className="compact-disclosure">
+          <summary>PreMan and public agent examples</summary>
+          <p className="muted small-text">
+            Repository examples cover PreMan’s shared agent loop, LangGraph, PydanticAI and
+            smolagents. They use synthetic workspaces and real model calls. Provider access is
+            required.
+          </p>
+          <a
+            className="text-link"
+            href="https://github.com/PreMan-Inc/MindTrust/blob/main/docs/agent-evaluations.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Setup and execution guide <ArrowRight size={13} />
+          </a>
+        </details>
+        <Button onClick={() => navigate('experiments')}>
+          Open experiments <ArrowRight size={14} />
+        </Button>
+      </div>
+    </Section>
   );
 }
 function CodeSnippet({ code, label }: { code: string; label: string }) {
@@ -154,8 +222,9 @@ function BraintrustCompatibility({
           <summary>Compatibility limits</summary>
           <p className="muted small-text">
             This is a tested subset. Arbitrary BTQL/SQL, gateways, hosted prompts and functions,
-            remote execution, attachments, overflow uploads, snapshot environments and server-side
-            baseline summaries are unsupported.
+            remote execution, attachments, overflow uploads and snapshot environments are
+            unsupported. Explicit baseline summaries require the same dataset revision and full
+            matching case coverage.
           </p>
           <p className="muted small-text">
             Replace Braintrust project IDs with MindTrust IDs. A scoped editor key needs an existing

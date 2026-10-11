@@ -1,5 +1,5 @@
 import express, { type ErrorRequestHandler, type Request } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isIP } from 'node:net';
@@ -616,11 +616,48 @@ export function createApp(options: AppOptions = {}) {
         datasetId: idSchema,
         datasetVersion: z.number().int().min(1),
         description: z.string().max(10000).optional(),
+        runId: idSchema.optional(),
+        concurrency: z.number().int().min(1).max(16).optional(),
+        createdAt: z.string().datetime({ offset: true }).optional(),
+        finishedAt: z.string().datetime({ offset: true }).optional(),
+        cancelled: z.boolean().optional(),
+        interrupted: z.boolean().optional(),
+        plannedCases: z.number().int().min(1).max(100000).optional(),
         cases: z.array(importCaseSchema).min(1).max(100000),
       }),
       req.body,
     );
     store.project(body.projectId);
+    if (body.plannedCases !== undefined && body.plannedCases < body.cases.length)
+      throw new HttpError(400, 'plannedCases is smaller than the received cases');
+    if (
+      body.plannedCases !== undefined &&
+      body.plannedCases > body.cases.length &&
+      !body.interrupted
+    )
+      throw new HttpError(400, 'Incomplete case coverage must be marked interrupted');
+    if (
+      body.createdAt &&
+      body.finishedAt &&
+      Date.parse(body.finishedAt) < Date.parse(body.createdAt)
+    )
+      throw new HttpError(400, 'Imported finish time precedes start time');
+    // Project-scoped stable IDs make a lost response safe to retry without rerunning paid agents.
+    const importId = body.runId
+      ? createHash('sha256')
+          .update(JSON.stringify([body.projectId, body.runId]))
+          .digest('hex')
+      : null;
+    const digest = createHash('sha256').update(stableJson(body)).digest('hex');
+    if (importId) {
+      const previous = store.get<Experiment & { importDigest?: string }>('experiment', importId);
+      if (previous) {
+        if (previous.importDigest !== digest)
+          throw new HttpError(409, 'runId already contains different results');
+        res.status(200).json(previous);
+        return;
+      }
+    }
     const dataset = requiredProjectResource<Dataset>(
         store,
         'dataset',
@@ -652,7 +689,7 @@ export function createApp(options: AppOptions = {}) {
           throw new HttpError(400, 'Imported trace belongs to another project');
       }
     }
-    const id = randomUUID(),
+    const id = importId ?? randomUUID(),
       scorerIds = [...new Set(body.cases.flatMap((c) => Object.keys(c.scores)))];
     const cases: EvalCase[] = body.cases.map((c) => ({
       ...c,
@@ -670,28 +707,36 @@ export function createApp(options: AppOptions = {}) {
     const importedScorers: Scorer[] = scorerIds
       .map((scoreId) => store.get<Scorer>('scorer', scoreId))
       .filter((s): s is Scorer => !!s && s.projectId === body.projectId);
-    const base: Experiment = {
+    const allFailed = cases.every((c) => c.error !== null);
+    const base: Experiment & { importDigest?: string } = {
       id,
       projectId: body.projectId,
       name: body.name,
       description: body.description ?? 'Imported independently executed evaluation.',
       datasetId: body.datasetId,
       datasetVersion: body.datasetVersion,
-      status: 'completed',
+      status: body.cancelled ? 'cancelled' : body.interrupted || allFailed ? 'failed' : 'completed',
       executionSource: 'sdk-import',
       task: { type: 'external' },
       scorerIds,
       trials: Math.max(...cases.map((c) => c.trial)),
-      concurrency: 1,
-      totalCases: cases.length,
+      concurrency: body.concurrency ?? 1,
+      totalCases: body.plannedCases ?? cases.length,
       completedCases: cases.length,
       scores: {},
       latencyMs: null,
       costUsd: null,
       unknownCostCount: 0,
-      createdAt: now(),
-      finishedAt: now(),
-      error: null,
+      createdAt: body.createdAt ?? now(),
+      finishedAt: body.finishedAt ?? now(),
+      error: body.cancelled
+        ? 'External evaluation cancelled.'
+        : body.interrupted
+          ? 'External evaluation interrupted; only completed cases were recovered.'
+          : allFailed
+            ? 'All evaluation cases failed; inspect the case errors.'
+            : null,
+      ...(importId ? { importDigest: digest } : {}),
     };
     const experiment = aggregateExperiment(base, cases);
     store.transaction(() => {

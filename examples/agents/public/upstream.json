@@ -1,0 +1,32 @@
+{
+  "langgraph": {
+    "repository": "https://github.com/langchain-ai/langgraph",
+    "version": "1.2.1",
+    "commit": "bf7fec0bd157fb9ba3c133c63e9ba2eea048e0e3",
+    "license": "MIT",
+    "entrypoint": "langgraph.graph.StateGraph",
+    "reference": "https://docs.langchain.com/oss/python/langgraph/quickstart",
+    "inspected_source": "https://raw.githubusercontent.com/langchain-ai/langgraph/bf7fec0bd157fb9ba3c133c63e9ba2eea048e0e3/libs/langgraph/langgraph/graph/state.py",
+    "inspected_source_sha256": "39712e49133f2bf31ab607ac551761d396ecdbcd1ffdde1c3e0812537ddd4e6e"
+  },
+  "pydantic-ai": {
+    "repository": "https://github.com/pydantic/pydantic-ai",
+    "version": "1.100.0",
+    "commit": "5f58b22a713b37c866654adaf87050417bbe6701",
+    "license": "MIT",
+    "entrypoint": "pydantic_ai.Agent.run",
+    "reference": "https://ai.pydantic.dev/agents/",
+    "inspected_source": "https://raw.githubusercontent.com/pydantic/pydantic-ai/5f58b22a713b37c866654adaf87050417bbe6701/pydantic_ai_slim/pydantic_ai/agent/__init__.py",
+    "inspected_source_sha256": "448fb9a002cf735c38301df752e05e481202a994b06abfdd6862e7ab83b0c00d"
+  },
+  "smolagents": {
+    "repository": "https://github.com/huggingface/smolagents",
+    "version": "1.22.0",
+    "commit": "f68ee35967da5c9051a0a9d94af6ac9ca06dafc2",
+    "license": "Apache-2.0",
+    "entrypoint": "smolagents.ToolCallingAgent.run",
+    "reference": "https://huggingface.co/docs/smolagents/reference/agents",
+    "inspected_source": "https://raw.githubusercontent.com/huggingface/smolagents/f68ee35967da5c9051a0a9d94af6ac9ca06dafc2/src/smolagents/agents.py",
+    "inspected_source_sha256": "652bcd3622a56921214dd59b9d67bf33ff26226b58db1b6bec0a6ee2cff1177a"
+  }
+}

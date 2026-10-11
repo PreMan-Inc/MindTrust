@@ -35,7 +35,7 @@ Then open **http://127.0.0.1:4310**.
 
 - **Projects and observability:** searchable, server-sorted trace tables with column controls, pagination, optional refresh, and a split inspector. Follow hierarchical span timelines, jump to failures, inspect structured JSON and metadata, and preserve unknown costs.
 - **Dataset curation:** search and filter examples by tag and ground-truth presence, inspect inline, browse immutable version history, import/export JSON, and create cases from reviewed traces with explicitly chosen expectations.
-- **Evaluations:** run echo/template tasks or a configured model provider, pin dataset revisions, snapshot scorer definitions, repeat trials, bound concurrency, inspect failures, cancel runs, and export results.
+- **Evaluations:** run real local agent functions or bounded Python processes through the SDK, or run echo/template tasks or a configured model provider, pin dataset revisions, snapshot scorer definitions, repeat trials, bound concurrency, inspect failures, cancel runs, and export results.
 - **Experiment comparison:** choose an explicit baseline and candidate, filter regressions/improvements/mixed changes per metric, compare outputs side by side, and open underlying traces. Coverage and provenance warnings stay visible; missing scores remain missing.
 - **Scorers:** exact match, containment, and JSON validation with optional field paths. The Node SDK also executes custom scorer functions locally.
 - **Prompts and playground:** version prompt text, render input variables, test deterministic templates, and execute real model calls when a provider is configured.
@@ -87,6 +87,12 @@ node examples/evaluate.mjs
 ```
 
 This creates a separate synthetic project and dataset, executes six cases, records nested traces, and imports the scored experiment. For an authenticated instance, set `MINDTRUST_API_KEY`; for another server, set `MINDTRUST_URL`.
+
+## Real agent evaluations
+
+MindTrust now includes runnable integrations for **PreMan’s production shared agent loop**, **LangGraph**, **PydanticAI**, and **smolagents**. These execute real model/tool loops against synthetic workspaces, retain nested traces and provider token usage, and score outcomes in the app. Deliberately broken tool results provide regression controls. See [the agent execution guide](docs/agent-evaluations.md), [PreMan run evidence](docs/preman-agent-evals.md), and [public framework run evidence](docs/public-agent-evals.md).
+
+The native SDK supports case/scorer deadlines, cancellation, subprocess termination, imported child spans, and retry-safe result delivery. The existing Braintrust SDK route supports the verified client-side workflows; agent code continues to run in your own environment. This is not a remotely hosted code sandbox or a claim that every Braintrust feature is supported.
 
 ## Real model calls
 
