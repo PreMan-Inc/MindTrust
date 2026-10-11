@@ -44,7 +44,8 @@ services:
     volumes:
       - workspace-data:/app/data
     networks:
-      - workspace
+      workspace:
+        ipv4_address: ${APP_IP:-172.30.10.3}
     expose:
       - '4310'
     read_only: true
