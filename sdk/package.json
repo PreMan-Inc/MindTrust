@@ -1,0 +1,16 @@
+{
+  "name": "@preman/mindtrust",
+  "version": "0.1.0",
+  "description": "Node.js tracing and evaluation client for MindTrust",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

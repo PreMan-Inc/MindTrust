@@ -1,0 +1,15 @@
+services:
+  mindtrust:
+    build: .
+    ports:
+      - '127.0.0.1:4310:4310'
+    environment:
+      MINDTRUST_ADMIN_TOKEN: ${MINDTRUST_ADMIN_TOKEN:?Set MINDTRUST_ADMIN_TOKEN in .env before starting Docker}
+      MINDTRUST_SEED: ${MINDTRUST_SEED:-false}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - mindtrust-data:/app/data
+    restart: unless-stopped
+volumes:
+  mindtrust-data:
