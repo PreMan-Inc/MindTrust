@@ -1,39 +1,7 @@
 import { useState } from 'react';
-import { usePermissions } from './session';
+import { ArrowRight, Check, CheckCheck, Play, Plus, Search, Terminal } from 'lucide-react';
+import type { Annotation, Json, Prompt, Scorer, ServerInfo, TaskConfig } from '../shared/types';
 import {
-  ArrowRight,
-  Check,
-  CheckCheck,
-  Clock3,
-  Code2,
-  Copy,
-  FileCode2,
-  History,
-  KeyRound,
-  MessageSquare,
-  Play,
-  Plus,
-  Save,
-  Search,
-  Settings,
-  ShieldCheck,
-  Sparkles,
-  Terminal,
-  Trash2,
-} from 'lucide-react';
-import type {
-  Annotation,
-  ApiKey,
-  Json,
-  Prompt,
-  Scorer,
-  ServerInfo,
-  TaskConfig,
-} from '../shared/types';
-import {
-  TOKEN_KEY,
-  api,
-  copy,
   date,
   duration,
   money,
@@ -45,12 +13,10 @@ import {
   useWorkspace,
 } from './lib';
 import {
-  Back,
   Badge,
   Button,
   Empty,
   ErrorBox,
-  External,
   Field,
   Form,
   FormActions,
@@ -81,9 +47,7 @@ export function PromptsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="DEVELOP"
         title="Prompts"
-        description="Version the instructions behind your application. Keep every iteration."
         actions={
           <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={15} />
@@ -96,7 +60,7 @@ export function PromptsPage() {
           <Search size={16} />
           <input
             aria-label="Search prompts"
-            placeholder="Search prompts, models, or instructions…"
+            placeholder="Search prompts…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -111,42 +75,44 @@ export function PromptsPage() {
       {list.loading && !list.data ? (
         <Loading />
       ) : list.data?.length ? (
-        <div className="prompt-grid">
+        <div className="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Prompt</th>
+                <th>Version</th>
+                <th>Model</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    <button className="row-title" onClick={() => setSelected(p)}>
+                      <span>
+                        {p.name}
+                        {p.description && <small>{p.description}</small>}
+                      </span>
+                    </button>
+                  </td>
+                  <td className="mono">v{p.version}</td>
+                  <td className="muted">{p.model || '—'}</td>
+                  <td className="muted nowrap">{date(p.updatedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           {!filtered.length && (
-            <Empty
-              title="No matching prompts"
-              description="Try a different name, model, or instruction."
-            />
+            <Empty title="No matching prompts" description="Try another search." />
           )}
-          {filtered.map((p) => (
-            <button key={p.id} className="prompt-card" onClick={() => setSelected(p)}>
-              <div className="prompt-card-head">
-                <span className="dataset-icon">
-                  <MessageSquare size={20} />
-                </span>
-                <Badge>v{p.version}</Badge>
-              </div>
-              <h3>{p.name}</h3>
-              <p>{p.description || 'A reusable, versioned prompt.'}</p>
-              <pre>{p.template}</pre>
-              <div>
-                <span className="code-tag">{p.model || 'No model specified'}</span>
-                <span className="muted small-text">{date(p.updatedAt)}</span>
-              </div>
-            </button>
-          ))}
         </div>
       ) : (
         <Empty
-          title="One place for every prompt"
-          description="Create a prompt and preserve each revision as your application evolves."
-          action={
-            <Button permission="write" onClick={() => setCreate(true)}>
-              Create your first prompt
-            </Button>
-          }
+          title="No prompts yet"
+          description="Create a prompt to save and version its instructions."
         />
-      )}{' '}
+      )}
       {(create || selected) && (
         <PromptEditor
           prompt={selected || undefined}
@@ -184,10 +150,10 @@ function PromptEditor({ prompt, onClose }: { prompt?: Prompt; onClose: () => voi
   }
   return (
     <Modal
-      title={prompt ? prompt.name : 'Create a prompt'}
+      title={prompt ? prompt.name : 'Create prompt'}
       description={
         prompt
-          ? 'Save your changes as a new, immutable version.'
+          ? 'Changes save as a new version.'
           : 'Use {{input}} or {{input.field}} variables in the template.'
       }
       onClose={onClose}
@@ -211,7 +177,7 @@ function PromptEditor({ prompt, onClose }: { prompt?: Prompt; onClose: () => voi
         }
       >
         {prompt && (
-          <Field label="Load a previous version">
+          <Field label="Version">
             <select value={version} onChange={(e) => loadVersion(Number(e.target.value))}>
               {detail.data?.versions.map((p) => (
                 <option key={p.version} value={p.version}>
@@ -240,10 +206,10 @@ function PromptEditor({ prompt, onClose }: { prompt?: Prompt; onClose: () => voi
             className="code-input"
             value={system}
             onChange={(e) => setSystem(e.target.value)}
-            placeholder="Instructions and boundaries for the model…"
+            placeholder="Instructions for the model…"
           />
         </Field>
-        <Field label="User prompt template">
+        <Field label="Prompt template">
           <textarea
             className="code-input tall"
             required
@@ -253,7 +219,11 @@ function PromptEditor({ prompt, onClose }: { prompt?: Prompt; onClose: () => voi
         </Field>
         <Field
           label="Model"
-          hint="Model metadata; if omitted on creation, the server default is used. Saving a prompt does not make a model call."
+          hint={
+            prompt
+              ? 'Metadata only; saving does not call the model.'
+              : 'Leave blank for the server default. Saving does not call the model.'
+          }
         >
           <input
             required={!!prompt}
@@ -281,7 +251,7 @@ interface PlaygroundResult {
   traceId: string;
 }
 export function PlaygroundPage() {
-  const { projectId, refresh, refreshAll, notify } = useWorkspace();
+  const { projectId, refresh, refreshAll } = useWorkspace();
   const info = useData<ServerInfo>('/info', refresh);
   const prompts = useData<Prompt[]>(`/prompts?${qs({ projectId })}`, refresh);
   const [type, setType] = useState<TaskConfig['type']>('template');
@@ -306,13 +276,9 @@ export function PlaygroundPage() {
   }
   return (
     <>
-      <PageHeader
-        eyebrow="DEVELOP"
-        title="Playground"
-        description="Try a prompt, inspect the result, and keep a trace of what happened."
-      />
+      <PageHeader title="Playground" />
       <div className="playground-grid">
-        <Section title="Configuration" detail="Test an idea before putting it in an experiment.">
+        <Section title="Request">
           <Form
             onSubmit={() =>
               action.run(async () => {
@@ -334,17 +300,17 @@ export function PlaygroundPage() {
               })
             }
           >
-            <Field label="Execution mode">
+            <Field label="Mode">
               <select value={type} onChange={(e) => setType(e.target.value as TaskConfig['type'])}>
-                <option value="template">Template · deterministic, no model call</option>
-                <option value="echo">Echo input · no model call</option>
+                <option value="template">Template · local</option>
+                <option value="echo">Echo · local</option>
                 <option value="openai" disabled={!info.data?.providerConfigured}>
                   Model provider
-                  {!info.data?.providerConfigured ? ' · configure on server first' : ''}
+                  {!info.data?.providerConfigured ? ' · not configured' : ''}
                 </option>
               </select>
             </Field>
-            <Field label="Load a saved prompt">
+            <Field label="Saved prompt">
               <select value={loadedPrompt} onChange={(e) => loadPrompt(e.target.value)}>
                 <option value="">Start from scratch</option>
                 {prompts.data?.map((p) => (
@@ -356,9 +322,9 @@ export function PlaygroundPage() {
             </Field>
             {type === 'openai' && (
               <>
-                <div className="info-banner">
-                  Uses the server’s configured provider. Model charges may apply.
-                </div>
+                <p className="muted small-text">
+                  Uses the configured provider; model charges may apply.
+                </p>
                 <div className="form-columns">
                   <Field label="Model">
                     <input required value={model} onChange={(e) => setModel(e.target.value)} />
@@ -380,10 +346,7 @@ export function PlaygroundPage() {
               </>
             )}
             {type !== 'echo' && (
-              <Field
-                label="Prompt template"
-                hint="Use {{input}} or {{input.field}} to reference your JSON input."
-              >
+              <Field label="Prompt template" hint="Variables: {{input}} or {{input.field}}.">
                 <textarea
                   className="code-input"
                   required
@@ -409,14 +372,7 @@ export function PlaygroundPage() {
             </div>
           </Form>
         </Section>
-        <Section
-          title="Result"
-          detail={
-            result
-              ? 'This execution was saved to your project’s logs.'
-              : 'Your output and execution details appear here.'
-          }
-        >
+        <Section title="Output">
           {action.busy ? (
             <Loading />
           ) : result ? (
@@ -429,17 +385,18 @@ export function PlaygroundPage() {
                 <span>{duration(result.latencyMs)}</span>
                 <span>{money(result.costUsd)}</span>
               </div>
-              <JsonBlock value={result.output} label="Output" />
-              <div className="key-value">
-                <span>Input tokens</span>
-                <strong>{result.inputTokens}</strong>
-                <span>Output tokens</span>
-                <strong>{result.outputTokens}</strong>
-                <span>Execution</span>
-                <strong>
-                  {resultType === 'openai' ? 'Model provider' : 'Local deterministic task'}
-                </strong>
-              </div>
+              <JsonBlock value={result.output} />
+              <details className="compact-disclosure">
+                <summary>Run details</summary>
+                <div className="key-value">
+                  <span>Input tokens</span>
+                  <strong>{result.inputTokens}</strong>
+                  <span>Output tokens</span>
+                  <strong>{result.outputTokens}</strong>
+                  <span>Execution</span>
+                  <strong>{resultType === 'openai' ? 'Model provider' : 'Local'}</strong>
+                </div>
+              </details>
               <Button onClick={() => setTraceId(result.traceId)}>
                 Inspect trace
                 <ArrowRight size={14} />
@@ -447,18 +404,8 @@ export function PlaygroundPage() {
             </div>
           ) : (
             <div className="playground-empty">
-              <div className="playground-orbit">
-                <Terminal size={29} />
-                <span />
-                <i />
-              </div>
-              <h3>Ready when you are.</h3>
-              <p>
-                Configure a prompt and input.
-                <br />
-                Run it to inspect the output and trace.
-              </p>
-              <Badge>No calls until you run</Badge>
+              <Terminal size={22} />
+              <p>Run a prompt to see its output.</p>
             </div>
           )}
         </Section>
@@ -475,9 +422,8 @@ export function ScorersPage() {
   return (
     <>
       <PageHeader
-        eyebrow="EVALUATE"
         title="Scorers"
-        description="Repeatable checks for the behaviors that matter to your product."
+        description="Local deterministic checks."
         actions={
           <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={15} />
@@ -485,44 +431,41 @@ export function ScorersPage() {
           </Button>
         }
       />
-      <div className="info-banner">
-        <ShieldCheck size={17} />
-        <span>
-          Deterministic checks run locally. No judge model calls, hidden model costs, or arbitrary
-          server code.
-        </span>
-      </div>
       <ErrorBox message={list.error} />
       {list.loading && !list.data ? (
         <Loading />
       ) : list.data?.length ? (
-        <div className="scorer-grid">
-          {list.data.map((s) => (
-            <button className="scorer-card" key={s.id} onClick={() => setSelected(s)}>
-              <div className="scorer-card-top">
-                <span className="dataset-icon">
-                  <ShieldCheck size={20} />
-                </span>
-                <Badge>Deterministic</Badge>
-              </div>
-              <h3>{s.name}</h3>
-              <p>{s.description || 'A repeatable check for evaluation outputs.'}</p>
-              <span className="code-tag">{s.type}</span>
-            </button>
-          ))}
+        <div className="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scorer</th>
+                <th>Check</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.data.map((s) => (
+                <tr key={s.id}>
+                  <td>
+                    <button className="row-title" onClick={() => setSelected(s)}>
+                      <span>
+                        {s.name}
+                        {s.description && <small>{s.description}</small>}
+                      </span>
+                    </button>
+                  </td>
+                  <td className="muted">{scorerLabel(s.type)}</td>
+                  <td className="muted nowrap">{date(s.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
-        <Empty
-          title="Make quality measurable"
-          description="Add a deterministic scorer to evaluate your outputs."
-          action={
-            <Button permission="write" onClick={() => setCreate(true)}>
-              Create scorer
-            </Button>
-          }
-        />
-      )}{' '}
-      {create && <CreateScorer onClose={() => setCreate(false)} />}{' '}
+        <Empty title="No scorers yet" description="Create a check for your evaluation outputs." />
+      )}
+      {create && <CreateScorer onClose={() => setCreate(false)} />}
       {selected && (
         <Modal
           title={selected.name}
@@ -531,14 +474,13 @@ export function ScorersPage() {
         >
           <div className="key-value">
             <span>Type</span>
-            <strong>{selected.type}</strong>
+            <strong>{scorerLabel(selected.type)}</strong>
             <span>Created</span>
             <strong>{date(selected.createdAt)}</strong>
           </div>
           <JsonBlock label="Configuration" value={selected.config} />
           <p className="muted small-text">
-            Scorers are snapshotted with each experiment. Create a new scorer to change the
-            evaluation criteria.
+            Each experiment keeps a snapshot. Create another scorer to change its criteria.
           </p>
         </Modal>
       )}
@@ -554,11 +496,7 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
   const [expectedPath, setExpectedPath] = useState('');
   const action = useAction();
   return (
-    <Modal
-      title="Create a scorer"
-      description="Clear rules. Consistent results. Every score can be inspected."
-      onClose={onClose}
-    >
+    <Modal title="Create scorer" onClose={onClose}>
       <Form
         onSubmit={() =>
           action.run(async () => {
@@ -587,7 +525,7 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
             placeholder="e.g. Exact answer match"
           />
         </Field>
-        <Field label="Scorer type">
+        <Field label="Check">
           <select value={type} onChange={(e) => setType(e.target.value as Scorer['type'])}>
             <option value="exact_match">Exact match · output equals expected</option>
             <option value="contains">Contains · output includes expected text</option>
@@ -597,28 +535,25 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
         <Field label="Description">
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <Field
-          label="Output field path"
-          hint="Optional dot path, such as answer.text. Empty checks the entire output."
-        >
-          <input
-            value={outputPath}
-            onChange={(e) => setOutputPath(e.target.value)}
-            placeholder="answer.text"
-          />
-        </Field>
-        {type !== 'json_valid' && (
-          <Field
-            label="Expected field path"
-            hint="Optional dot path. A missing field cannot pass a check."
-          >
+        <details className="compact-disclosure">
+          <summary>Field paths · optional</summary>
+          <Field label="Output field path" hint="Leave blank to check the entire output.">
             <input
-              value={expectedPath}
-              onChange={(e) => setExpectedPath(e.target.value)}
+              value={outputPath}
+              onChange={(e) => setOutputPath(e.target.value)}
               placeholder="answer.text"
             />
           </Field>
-        )}
+          {type !== 'json_valid' && (
+            <Field label="Expected field path" hint="Missing fields cannot pass.">
+              <input
+                value={expectedPath}
+                onChange={(e) => setExpectedPath(e.target.value)}
+                placeholder="answer.text"
+              />
+            </Field>
+          )}
+        </details>
         <ErrorBox message={action.error} />
         <FormActions busy={action.busy} label="Create scorer" onCancel={onClose} />
       </Form>
@@ -635,9 +570,7 @@ export function ReviewPage() {
   return (
     <>
       <PageHeader
-        eyebrow="HUMAN JUDGMENT, CAPTURED"
         title="Review"
-        description="Collect feedback on traces and evaluation cases. Keep expectations explicit."
         actions={
           <Button onClick={() => navigate('logs')}>
             Review a trace
@@ -648,8 +581,7 @@ export function ReviewPage() {
       <ErrorBox message={list.error} />
       <div className="panel">
         <div className="filter-bar">
-          <strong>Annotations</strong>
-          <span className="count-label">{rows?.length || 0}</span>
+          <span className="muted">{rows?.length || 0} reviews</span>
           <div className="filter-spacer" />
           <select
             aria-label="Review status filter"
@@ -670,7 +602,7 @@ export function ReviewPage() {
               <thead>
                 <tr>
                   <th>Target</th>
-                  <th>Assessment</th>
+                  <th>Label</th>
                   <th>Comment</th>
                   <th>Reviewed</th>
                 </tr>
@@ -710,13 +642,16 @@ export function ReviewPage() {
           </div>
         ) : (
           <Empty
-            title="Your expertise belongs in the loop"
-            description="Open a trace or experiment case to add a review and expected output."
-            action={<Button onClick={() => navigate('logs')}>Explore traces</Button>}
+            title={filter === 'all' ? 'No reviews yet' : 'No matching reviews'}
+            description={
+              filter === 'all'
+                ? 'Open a trace or evaluation case to add feedback.'
+                : 'Choose another label.'
+            }
           />
         )}
       </div>
-      {traceId && <TraceDrawer id={traceId} onClose={() => setTraceId(null)} />}{' '}
+      {traceId && <TraceDrawer id={traceId} onClose={() => setTraceId(null)} />}
       {selected && (
         <Modal
           title="Review detail"
@@ -734,4 +669,8 @@ export function ReviewPage() {
 }
 function BookReviewIcon() {
   return <CheckCheck size={15} />;
+}
+
+function scorerLabel(type: Scorer['type']) {
+  return { exact_match: 'Exact match', contains: 'Contains', json_valid: 'Valid JSON' }[type];
 }

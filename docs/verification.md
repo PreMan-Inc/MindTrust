@@ -50,6 +50,12 @@ Browser checks used only local synthetic data:
 
 The visual comparison informed the original navigation, table, and inspection design. It does not establish complete Braintrust UI parity. Screenshots: [overview](images/mindtrust-overview.jpg), [experiment comparison](images/experiment-comparison.jpg), [trace inspector](images/trace-workbench.jpg).
 
+## PreMan layout refinement
+
+The console now follows PreMan’s neutral charcoal surfaces and compact controls. Browser checks covered overview activity tabs, log filters and span inspection, baseline/candidate comparison and case details, prompt search, and expandable integration guidance. At 390-pixel and 820-pixel widths there was no page-level horizontal overflow; short-screen trace payloads remain scrollable. Closed mobile navigation is hidden from keyboard focus, and dialogs lock the workspace scroller. The normal viewport was restored after responsive checks.
+
+Node.js 24 typecheck, all 76 existing tests, and the production build passed. This pass changes presentation and navigation, with no API or persistence changes.
+
 ## Repeatable local workload
 
 Run `npm run benchmark -- --traces 5000 --out docs/benchmark-local.json`. The saved JSON includes the runtime, hardware, request size, batching, concurrency, full-durability mode, ingestion results, and paginated query timings. This is a native-ingestion workload over loopback HTTP without TLS. It does not measure distributed behavior, production capacity, Braintrust compatibility ingestion performance, or another vendor's service.

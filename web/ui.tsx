@@ -3,7 +3,6 @@ import {
   X,
   AlertCircle,
   ArrowUpRight,
-  Inbox,
   LoaderCircle,
   ChevronRight,
   Copy,
@@ -58,7 +57,7 @@ export function Status({ value }: { value: string }) {
           ? 'green'
           : ['error', 'failed', 'incorrect'].includes(value)
             ? 'red'
-            : ['running', 'queued', 'needs_review'].includes(value)
+            : ['running', 'needs_review'].includes(value)
               ? 'amber'
               : 'neutral'
       }
@@ -80,7 +79,7 @@ export function Loading() {
   return (
     <div className="loading" role="status">
       <LoaderCircle className="spin" size={20} />
-      Loading workspace data…
+      Loading…
     </div>
   );
 }
@@ -95,9 +94,6 @@ export function Empty({
 }) {
   return (
     <div className="empty">
-      <div className="empty-icon">
-        <Inbox size={24} />
-      </div>
       <h3>{title}</h3>
       {description && <p>{description}</p>}
       {action}
@@ -105,7 +101,6 @@ export function Empty({
   );
 }
 export function PageHeader({
-  eyebrow,
   title,
   description,
   actions,
@@ -118,7 +113,6 @@ export function PageHeader({
   return (
     <header className="page-header">
       <div>
-        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>

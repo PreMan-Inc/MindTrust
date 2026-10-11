@@ -1,27 +1,23 @@
 import { useEffect, useId, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import {
-  Activity,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpDown,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
+  ChevronUp,
   CircleAlert,
   Code2,
   Columns3,
   Copy,
   Database,
   Expand,
-  GitBranch,
   MessageSquare,
   Plus,
   RefreshCw,
   Search,
-  SlidersHorizontal,
   Waypoints,
   X,
 } from 'lucide-react';
@@ -252,7 +248,7 @@ export function TraceTable({
   ) : (
     <Empty
       title="No matching traces"
-      description="Try a different search or status, or connect your application to start recording runs."
+      description="Change your filters or connect an application."
     />
   );
 }
@@ -273,7 +269,7 @@ function TraceExplorer() {
   const [sort, setSort] = useState<TraceSort>('startTime');
   const [direction, setDirection] = useState<'asc' | 'desc'>('desc');
   const [columns, setColumns] = useState(defaultColumns);
-  const [dense, setDense] = useState(false);
+  const [dense, setDense] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [poll, setPoll] = useState(0);
   const action = useAction();
@@ -311,14 +307,12 @@ function TraceExplorer() {
   return (
     <div className="obs-page">
       <PageHeader
-        eyebrow="OBSERVABILITY"
         title="Logs"
-        description="Recorded inputs, outputs, execution paths, and feedback for every run."
         actions={
           <>
             <Button onClick={() => navigate('integrations')}>
               <Code2 size={14} />
-              Connect an app
+              Connect
             </Button>
             <Button
               disabled={action.busy}
@@ -330,7 +324,7 @@ function TraceExplorer() {
               }
             >
               <ArrowDownToLine size={14} />
-              Export project
+              Export
             </Button>
           </>
         }
@@ -339,10 +333,10 @@ function TraceExplorer() {
       <section className="obs-console" aria-label="Trace explorer">
         <div className="obs-toolbar">
           <div className="obs-search">
-            <Search size={15} />
+            <Search size={14} />
             <input
               aria-label="Search traces"
-              placeholder="Search names, inputs, outputs, metadata…"
+              placeholder="Search traces…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -352,28 +346,69 @@ function TraceExplorer() {
                 aria-label="Clear trace search"
                 onClick={() => setSearch('')}
               >
-                <X size={14} />
+                <X size={13} />
               </button>
             )}
           </div>
-          <div className="obs-toolbar-actions">
-            <button
-              className={`obs-auto-refresh ${autoRefresh ? 'active' : ''}`}
-              title="Refresh visible trace data every 10 seconds"
-              aria-pressed={autoRefresh}
-              onClick={() => setAutoRefresh(!autoRefresh)}
+          <select
+            className="obs-status-select"
+            aria-label="Filter trace status"
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value);
+              setOffset(0);
+            }}
+          >
+            <option value="">All statuses</option>
+            <option value="error">Errors</option>
+            <option value="ok">Successful</option>
+          </select>
+          <div className="obs-sort-control">
+            <select
+              aria-label="Sort traces"
+              value={sort}
+              onChange={(event) => changeSort(event.target.value as TraceSort)}
             >
-              <span />
-              {autoRefresh ? 'Auto · 10s' : 'Auto refresh'}
-            </button>
+              {Object.entries(sortLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
             <button
               className="icon-button"
+              aria-label={`Sort ${direction === 'asc' ? 'descending' : 'ascending'}`}
+              title={`Sort ${direction === 'asc' ? 'descending' : 'ascending'}`}
+              onClick={() => {
+                setDirection(direction === 'asc' ? 'desc' : 'asc');
+                setOffset(0);
+              }}
+            >
+              <ArrowDownUp direction={direction} />
+            </button>
+          </div>
+          <div className="obs-toolbar-actions">
+            <button
+              className="icon-button"
+              aria-label="Clear trace filters"
+              title="Clear filters"
+              disabled={!search && !status}
+              onClick={() => {
+                setSearch('');
+                setStatus('');
+                setOffset(0);
+              }}
+            >
+              <X size={14} />
+            </button>
+            <button
+              className={`icon-button obs-refresh ${autoRefresh ? 'is-live' : ''}`}
               aria-label="Refresh traces"
-              title="Refresh traces"
+              title={autoRefresh ? 'Auto-refreshing every 10 seconds' : 'Refresh traces'}
               disabled={loading}
               onClick={refreshAll}
             >
-              <RefreshCw size={15} className={loading ? 'spin' : ''} />
+              <RefreshCw size={14} />
             </button>
             <details className="obs-column-menu">
               <summary>
@@ -382,7 +417,7 @@ function TraceExplorer() {
                 <ChevronDown size={12} />
               </summary>
               <div className="obs-view-menu">
-                <strong>Visible columns</strong>
+                <strong>Columns</strong>
                 {defaultColumns.map((column) => (
                   <label key={column}>
                     <input
@@ -410,97 +445,18 @@ function TraceExplorer() {
                   />
                   Compact rows
                 </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={autoRefresh}
+                    onChange={(event) => setAutoRefresh(event.target.checked)}
+                  />
+                  Refresh every 10s
+                </label>
               </div>
             </details>
           </div>
         </div>
-        <div className="obs-filter-row">
-          <div className="obs-status-switch" role="group" aria-label="Filter trace status">
-            {[
-              { value: '', label: 'All runs', icon: Activity },
-              { value: 'error', label: 'Errors', icon: CircleAlert },
-              { value: 'ok', label: 'Successful', icon: Check },
-            ].map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                className={`${status === value ? 'active' : ''} ${value}`}
-                aria-pressed={status === value}
-                onClick={() => {
-                  setStatus(value);
-                  setOffset(0);
-                }}
-              >
-                <Icon size={13} />
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="obs-filter-meta">
-            <span>
-              {loading && !data
-                ? 'Loading…'
-                : `${(data?.total ?? 0).toLocaleString()} ${data?.total === 1 ? 'trace' : 'traces'}`}
-            </span>
-            <span className="obs-filter-separator" />
-            <label className="obs-sort-select">
-              <ArrowDownUp direction={direction} />
-              <select
-                aria-label="Sort traces"
-                value={sort}
-                onChange={(event) => changeSort(event.target.value as TraceSort)}
-              >
-                {Object.entries(sortLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              className="icon-button"
-              aria-label={`Sort ${direction === 'asc' ? 'descending' : 'ascending'}`}
-              title={`Sort ${direction === 'asc' ? 'descending' : 'ascending'}`}
-              onClick={() => {
-                setDirection(direction === 'asc' ? 'desc' : 'asc');
-                setOffset(0);
-              }}
-            >
-              <ChevronsUpDown size={13} />
-            </button>
-          </div>
-        </div>
-        {(query || status) && (
-          <div className="obs-applied-filters">
-            <SlidersHorizontal size={12} />
-            {query && (
-              <button onClick={() => setSearch('')}>
-                Search: {query}
-                <X size={11} />
-              </button>
-            )}
-            {status && (
-              <button
-                onClick={() => {
-                  setStatus('');
-                  setOffset(0);
-                }}
-              >
-                Status: {status === 'ok' ? 'successful' : 'error'}
-                <X size={11} />
-              </button>
-            )}
-            <button
-              className="obs-clear-filters"
-              onClick={() => {
-                setSearch('');
-                setStatus('');
-                setOffset(0);
-              }}
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
         <div className={`obs-workspace ${selected ? 'has-inspector' : ''}`}>
           <div className="obs-results" aria-busy={loading}>
             {loading && !data ? (
@@ -572,13 +528,6 @@ function TraceExplorer() {
               }
             />
           )}
-        </div>
-        <div className="obs-console-caption">
-          <span>
-            <span className="obs-connection-dot" />
-            Project traces
-          </span>
-          <span>Use ↑ ↓ on a run to inspect adjacent traces</span>
         </div>
       </section>
     </div>
@@ -693,10 +642,7 @@ function TraceInspector({
   const view = (
     <aside className="obs-inspector" aria-label="Trace inspector">
       <div className="obs-inspector-top">
-        <span>
-          <GitBranch size={13} />
-          Trace details
-        </span>
+        <h2 title={trace?.name}>{trace?.name || 'Trace'}</h2>
         <div>
           {onClose && (
             <>
@@ -743,7 +689,6 @@ function TraceInspector({
           <>
             <div className="obs-inspector-heading">
               <div>
-                <h2 title={trace.name}>{trace.name}</h2>
                 <button
                   className="obs-copy-id"
                   title="Copy full trace ID"
@@ -773,8 +718,8 @@ function TraceInspector({
                 <CircleAlert size={14} />
                 <span>
                   {errorSpans.length
-                    ? `${errorSpans.length} ${errorSpans.length === 1 ? 'span reported an error' : 'spans reported errors'}`
-                    : 'This run reported an error'}
+                    ? `${errorSpans.length} failed ${errorSpans.length === 1 ? 'span' : 'spans'}`
+                    : 'Run failed'}
                 </span>
                 {errorSpans.length > 0 && (
                   <button
@@ -795,35 +740,37 @@ function TraceInspector({
               <div className="obs-trace-tree">
                 <div className="obs-tree-heading">
                   <h3>
-                    Execution tree<span>{spans.length}</span>
+                    Spans<span>{spans.length}</span>
                   </h3>
+                  <div className="obs-tree-search">
+                    <Search size={12} />
+                    <input
+                      aria-label="Search spans"
+                      placeholder="Find a span…"
+                      value={spanSearch}
+                      onChange={(event) => setSpanSearch(event.target.value)}
+                    />
+                    <button
+                      className={`icon-button ${errorsOnly ? 'active' : ''}`}
+                      aria-label="Show error spans only"
+                      aria-pressed={errorsOnly}
+                      title="Show error spans only"
+                      onClick={() => setErrorsOnly(!errorsOnly)}
+                    >
+                      <CircleAlert size={13} />
+                    </button>
+                  </div>
                   <button
-                    className="obs-text-button"
+                    className="icon-button"
+                    aria-label={collapsed.size ? 'Expand all spans' : 'Collapse all spans'}
+                    title={collapsed.size ? 'Expand all spans' : 'Collapse all spans'}
                     onClick={() =>
                       setCollapsed(
                         collapsed.size ? new Set() : new Set(spans.map((item) => item.id)),
                       )
                     }
                   >
-                    {collapsed.size ? 'Expand all' : 'Collapse all'}
-                  </button>
-                </div>
-                <div className="obs-tree-search">
-                  <Search size={12} />
-                  <input
-                    aria-label="Search spans"
-                    placeholder="Find a span…"
-                    value={spanSearch}
-                    onChange={(event) => setSpanSearch(event.target.value)}
-                  />
-                  <button
-                    className={`icon-button ${errorsOnly ? 'active' : ''}`}
-                    aria-label="Show error spans only"
-                    aria-pressed={errorsOnly}
-                    title="Show error spans only"
-                    onClick={() => setErrorsOnly(!errorsOnly)}
-                  >
-                    <CircleAlert size={13} />
+                    {collapsed.size ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
                   </button>
                 </div>
                 <div className="obs-timeline-scale">
@@ -894,7 +841,7 @@ function TraceInspector({
                             </span>
                             <span className="obs-span-title">
                               {item.name}
-                              <small>{item.model || item.kind}</small>
+                              {item.model && <small>{item.model}</small>}
                             </span>
                             <span className="obs-span-duration">{duration(elapsed)}</span>
                           </button>
@@ -1063,8 +1010,7 @@ function TraceInspector({
                       <div className="obs-action-intro">
                         <MessageSquare size={17} />
                         <div>
-                          <h3>Review this run</h3>
-                          <p>Keep human feedback alongside the complete trace.</p>
+                          <h3>Review</h3>
                         </div>
                       </div>
                       <Form
@@ -1150,8 +1096,7 @@ function TraceInspector({
                       <div className="obs-action-intro">
                         <Database size={18} />
                         <div>
-                          <h3>Turn this run into a test</h3>
-                          <p>Save a real input with an answer your team has reviewed.</p>
+                          <h3>Save a test case</h3>
                         </div>
                       </div>
                       <ErrorBox message={datasets.error} />
@@ -1221,13 +1166,11 @@ function TraceInspector({
                           </select>
                         </Field>
                         {!datasets.loading && !datasets.data?.length && (
-                          <p className="obs-muted">
-                            Create a dataset in the Datasets page before saving this input.
-                          </p>
+                          <p className="obs-muted">Create a dataset to save this input.</p>
                         )}
                         <Field
                           label="Expected output (JSON)"
-                          hint="Enter the correct answer explicitly. The observed output is never used automatically."
+                          hint="Use reviewed ground truth; the observed output is not copied."
                         >
                           <textarea
                             required

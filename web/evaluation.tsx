@@ -21,9 +21,7 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ArrowUpFromLine,
-  Check,
   ChevronRight,
-  Clock3,
   Database,
   FileJson,
   FlaskConical,
@@ -76,7 +74,6 @@ import {
   Loading,
   Modal,
   PageHeader,
-  Stat,
   Status,
 } from './ui';
 import { Score, TraceDrawer } from './App';
@@ -101,7 +98,6 @@ export function DatasetsPage() {
     <div className="eval-console">
       <PageHeader
         title="Datasets"
-        description="Your ground truth. Versioned, inspectable, ready to evaluate."
         actions={
           <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={16} />
@@ -110,24 +106,6 @@ export function DatasetsPage() {
         }
       />
       <ErrorBox message={error} />
-      <div className="eval-overview-strip">
-        <div>
-          <Database size={16} />
-          <strong>{data?.length ?? '—'}</strong>
-          <span>datasets</span>
-        </div>
-        <div>
-          <FileJson size={16} />
-          <strong>
-            {data?.reduce((sum, row) => sum + row.rowCount, 0).toLocaleString() ?? '—'}
-          </strong>
-          <span>examples in latest versions</span>
-        </div>
-        <div className="eval-strip-note">
-          <History size={15} />
-          Every edit is preserved in version history
-        </div>
-      </div>
       <div className="panel eval-table-panel">
         <div className="filter-bar">
           <div className="search-box">
@@ -170,14 +148,14 @@ export function DatasetsPage() {
                         </span>
                         <span>
                           {d.name}
-                          <small>{d.description || 'No description'}</small>
+                          {d.description && <small>{d.description}</small>}
                         </span>
                       </button>
                     </td>
                     <td className="tabular">{d.rowCount.toLocaleString()}</td>
                     <td>
                       <Badge>v{d.version}</Badge>
-                      {d.id === 'demo-dataset' && <Badge tone="amber">Synthetic</Badge>}
+                      {d.id === 'demo-dataset' && <Badge>Synthetic</Badge>}
                     </td>
                     <td className="muted nowrap">{date(d.updatedAt)}</td>
                     <td>
@@ -196,11 +174,11 @@ export function DatasetsPage() {
           </div>
         ) : (
           <Empty
-            title={search ? 'No datasets match your search' : 'Build your first evaluation dataset'}
+            title={search ? 'No matching datasets' : 'No datasets yet'}
             description={
               search
                 ? 'Try a different name or description.'
-                : 'Add examples, import JSON, or turn a production trace into a test.'
+                : 'Create a dataset to add or import examples.'
             }
             action={
               search ? (
@@ -244,11 +222,7 @@ function CreateDataset({
   const [description, setDescription] = useState('');
   const action = useAction();
   return (
-    <Modal
-      title="Create a dataset"
-      description="Every change creates a snapshot you can evaluate again."
-      onClose={onClose}
-    >
+    <Modal title="Create dataset" onClose={onClose}>
       <Form
         onSubmit={() =>
           action.run(async () => {
@@ -407,12 +381,6 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
       </div>
       {history ? (
         <div className="panel eval-history-panel">
-          <div className="panel-head">
-            <div>
-              <h2>Version history</h2>
-              <p>Each snapshot preserves the examples used in your evaluations.</p>
-            </div>
-          </div>
           {detail.loading && !data ? (
             <Loading />
           ) : (
@@ -443,7 +411,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                             setInspecting(null);
                           }}
                         >
-                          Inspect snapshot <ArrowRight size={13} />
+                          Open version <ArrowRight size={13} />
                         </Button>
                       </td>
                     </tr>
@@ -461,7 +429,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                 <Search size={15} />
                 <input
                   aria-label="Search dataset examples"
-                  placeholder="Search input, expected, tags, metadata…"
+                  placeholder="Search examples…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -579,10 +547,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
           {inspected && (
             <aside className="eval-inspector" aria-label="Example details">
               <div className="eval-inspector-head">
-                <div>
-                  <span className="eyebrow">EXAMPLE</span>
-                  <h3>Inspect ground truth</h3>
-                </div>
+                <h3>Example</h3>
                 <button
                   className="icon-button"
                   aria-label="Close example details"
@@ -596,10 +561,8 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                 <JsonBlock label="Input" value={inspected.input} />
                 {inspected.hasExpected === false ? (
                   <div className="eval-no-ground-truth">
-                    <strong>No expected output</strong>
-                    <p>
-                      This example has no ground truth. An explicit JSON null is treated separately.
-                    </p>
+                    <span>Expected output</span>
+                    <p>Not provided</p>
                   </div>
                 ) : (
                   <JsonBlock label="Expected output" value={inspected.expected} />
@@ -903,6 +866,7 @@ export function ExperimentsPage({
   const [create, setCreate] = useState(false);
   const [baseline, setBaseline] = useState('');
   const [candidate, setCandidate] = useState('');
+  const [compareOpen, setCompareOpen] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -949,9 +913,8 @@ export function ExperimentsPage({
   );
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
   const visible = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
-  const running = list.data?.filter((e) => ['running', 'queued'].includes(e.status)).length ?? 0;
-  const completed = list.data?.filter((e) => e.status === 'completed').length ?? 0;
   function selectForCompare(id: string) {
+    setCompareOpen(true);
     if (baseline === id) setBaseline('');
     else if (candidate === id) setCandidate('');
     else if (!baseline) setBaseline(id);
@@ -989,106 +952,93 @@ export function ExperimentsPage({
     <div className="eval-console">
       <PageHeader
         title="Experiments"
-        description="Compare quality, latency, and cost before you ship a change."
         actions={
-          <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
-            <Plus size={16} />
-            New experiment
-          </Button>
+          <>
+            <Button
+              aria-expanded={compareOpen}
+              aria-controls="experiment-comparison-picker"
+              onClick={() => setCompareOpen((open) => !open)}
+            >
+              <GitCompareArrows size={15} />
+              Compare
+            </Button>
+            <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
+              <Plus size={16} />
+              New experiment
+            </Button>
+          </>
         }
       />
       <ErrorBox message={list.error || datasets.error || scorers.error} />
-      <div className="eval-overview-strip">
-        <div>
-          <FlaskConical size={16} />
-          <strong>{list.data?.length ?? '—'}</strong>
-          <span>experiments</span>
-        </div>
-        <div>
-          <Check size={16} />
-          <strong>{completed}</strong>
-          <span>completed</span>
-        </div>
-        <div>
-          <Clock3 size={16} />
-          <strong>{running}</strong>
-          <span>in progress</span>
-        </div>
-        <div className="eval-strip-note">
-          <GitCompareArrows size={15} />
-          Select two runs to compare results
-        </div>
-      </div>
-      <div className="eval-comparison-picker">
-        <GitCompareArrows size={19} />
-        <label>
-          <span>Baseline</span>
-          <select
-            aria-label="Baseline experiment"
-            value={baseline}
-            onChange={(ev) => {
-              setBaseline(ev.target.value);
-              if (ev.target.value === candidate) setCandidate('');
-            }}
-          >
-            <option value="">Choose a baseline…</option>
-            {list.data?.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="icon-button"
-          aria-label="Swap selected experiments"
-          disabled={!baseline || !candidate}
-          onClick={() => {
-            setBaseline(candidate);
-            setCandidate(baseline);
-          }}
-        >
-          <ArrowLeftRight size={16} />
-        </button>
-        <label>
-          <span>Candidate</span>
-          <select
-            aria-label="Candidate experiment"
-            value={candidate}
-            onChange={(ev) => setCandidate(ev.target.value)}
-          >
-            <option value="">Choose a candidate…</option>
-            {list.data
-              ?.filter((e) => e.id !== baseline)
-              .map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        <Button
-          variant="primary"
-          disabled={!baseline || !candidate || baseline === candidate}
-          onClick={() => setComparing(true)}
-        >
-          Compare runs
-          <ArrowRight size={14} />
-        </Button>
-        {(baseline || candidate) && (
-          <button
-            className="icon-button"
-            aria-label="Clear comparison selection"
-            onClick={() => {
-              setBaseline('');
-              setCandidate('');
-            }}
-          >
-            <X size={16} />
-          </button>
-        )}
-      </div>
       <div className="panel eval-table-panel">
+        {compareOpen && (
+          <div className="eval-comparison-picker" id="experiment-comparison-picker">
+            <label>
+              <span>Baseline</span>
+              <select
+                aria-label="Baseline experiment"
+                value={baseline}
+                onChange={(ev) => {
+                  setBaseline(ev.target.value);
+                  if (ev.target.value === candidate) setCandidate('');
+                }}
+              >
+                <option value="">Select run…</option>
+                {list.data?.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="icon-button"
+              aria-label="Swap selected experiments"
+              disabled={!baseline || !candidate}
+              onClick={() => {
+                setBaseline(candidate);
+                setCandidate(baseline);
+              }}
+            >
+              <ArrowLeftRight size={16} />
+            </button>
+            <label>
+              <span>Candidate</span>
+              <select
+                aria-label="Candidate experiment"
+                value={candidate}
+                onChange={(ev) => setCandidate(ev.target.value)}
+              >
+                <option value="">Select run…</option>
+                {list.data
+                  ?.filter((e) => e.id !== baseline)
+                  .map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <Button
+              disabled={!baseline || !candidate || baseline === candidate}
+              onClick={() => setComparing(true)}
+            >
+              Open comparison
+              <ArrowRight size={14} />
+            </Button>
+            <button
+              className="icon-button"
+              aria-label="Close and clear comparison selection"
+              onClick={() => {
+                setBaseline('');
+                setCandidate('');
+                setCompareOpen(false);
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         <div className="filter-bar">
           <div className="search-box">
             <Search size={16} />
@@ -1206,11 +1156,11 @@ export function ExperimentsPage({
                     </td>
                     <td>
                       <Score value={scoreMetric ? e.scores[scoreMetric] : averageScore(e.scores)} />
-                      <small className="eval-metric-note">
-                        {scoreMetric
-                          ? 'Selected score'
-                          : `${e.scorerIds.length} ${e.scorerIds.length === 1 ? 'scorer' : 'scorers'}`}
-                      </small>
+                      {!scoreMetric && (
+                        <small className="eval-metric-note">
+                          {e.scorerIds.length} {e.scorerIds.length === 1 ? 'scorer' : 'scorers'}
+                        </small>
+                      )}
                     </td>
                     <td className="tabular">{duration(e.latencyMs)}</td>
                     <td className="tabular">
@@ -1530,42 +1480,43 @@ function ExperimentView({
       ) : (
         e && (
           <>
-            <div className="experiment-state">
-              <Status value={e.status} />
-              <div className="progress-track">
-                <i
-                  style={{
-                    width: `${e.totalCases ? (e.completedCases / e.totalCases) * 100 : 0}%`,
-                  }}
-                />
+            <div className="panel eval-experiment-summary">
+              <div className="experiment-state">
+                <Status value={e.status} />
+                {running && (
+                  <div className="progress-track">
+                    <i
+                      style={{
+                        width: `${e.totalCases ? (e.completedCases / e.totalCases) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                )}
+                <span>
+                  {e.completedCases} / {e.totalCases} cases
+                </span>
               </div>
-              <span>
-                {e.completedCases} / {e.totalCases} cases
-              </span>
-            </div>
-            <div className="experiment-stats">
-              {columns.map((s) => (
-                <Stat
-                  key={s.id}
-                  label={s.name}
-                  value={<Score value={e.scores[s.id]} />}
-                  detail={s.type.replaceAll('_', ' ')}
-                />
-              ))}
-              <Stat
-                label="Mean case latency"
-                value={duration(e.latencyMs)}
-                detail="Measured execution time"
-              />
-              <Stat
-                label="Recorded cost"
-                value={money(e.costUsd)}
-                detail={
-                  e.unknownCostCount
-                    ? `${e.unknownCostCount} cases with unknown cost`
-                    : 'All completed cases accounted for'
-                }
-              />
+              <dl className="eval-run-summary">
+                {columns.map((s) => (
+                  <div key={s.id}>
+                    <dt title={s.type.replaceAll('_', ' ')}>{s.name}</dt>
+                    <dd>
+                      <Score value={e.scores[s.id]} />
+                    </dd>
+                  </div>
+                ))}
+                <div>
+                  <dt>Mean latency</dt>
+                  <dd>{duration(e.latencyMs)}</dd>
+                </div>
+                <div>
+                  <dt>Recorded cost</dt>
+                  <dd>
+                    {money(e.costUsd)}
+                    {!!e.unknownCostCount && <small>{e.unknownCostCount} unknown</small>}
+                  </dd>
+                </div>
+              </dl>
             </div>
             <div className="panel eval-table-panel">
               <div className="filter-bar">
@@ -1801,7 +1752,6 @@ function CompareView({
       <Back onClick={onBack}>All experiments</Back>
       <PageHeader
         title="Compare experiments"
-        description="Inspect the change from baseline to candidate, one case at a time."
         actions={
           <Button
             onClick={() => {
@@ -1829,86 +1779,100 @@ function CompareView({
                 </div>
               </div>
             )}
-            <div className="eval-run-pair">
-              {[data.baseline, data.candidate].map((experiment, i) => (
-                <div className="eval-run-card" key={experiment.id}>
-                  <div className="eval-run-card-heading">
-                    <span className={`eval-run-role ${i ? 'candidate' : ''}`}>
-                      {i ? 'CANDIDATE' : 'BASELINE'}
-                    </span>
-                    <Status value={experiment.status} />
+            <div className="panel eval-comparison-summary">
+              <div className="eval-run-pair">
+                {[data.baseline, data.candidate].map((experiment, i) => (
+                  <div className="eval-run-card" key={experiment.id}>
+                    <div className="eval-run-card-heading">
+                      <span className="eval-run-role">{i ? 'Candidate' : 'Baseline'}</span>
+                      <Status value={experiment.status} />
+                    </div>
+                    <h2>{experiment.name}</h2>
+                    <div className="eval-run-provenance">
+                      <Database size={13} />
+                      <code>{experiment.datasetId}</code>
+                      <Badge>v{experiment.datasetVersion}</Badge>
+                      <span>
+                        {experiment.executionSource === 'sdk-import'
+                          ? 'SDK import'
+                          : experiment.executionSource === 'synthetic'
+                            ? 'Synthetic'
+                            : 'Server run'}
+                      </span>
+                    </div>
+                    <div className="eval-run-metrics">
+                      <span>
+                        <strong>{experiment.completedCases.toLocaleString()}</strong> cases
+                      </span>
+                      <span>
+                        <strong>{duration(experiment.latencyMs)}</strong> mean latency
+                      </span>
+                      <span>
+                        <strong>{money(experiment.costUsd)}</strong> recorded cost
+                        {experiment.unknownCostCount
+                          ? ` · ${experiment.unknownCostCount} unknown`
+                          : ''}
+                      </span>
+                    </div>
                   </div>
-                  <h2>{experiment.name}</h2>
-                  <div className="eval-run-provenance">
-                    <Database size={13} />
-                    <code>{experiment.datasetId}</code>
-                    <Badge>v{experiment.datasetVersion}</Badge>
-                    <span>
-                      {experiment.executionSource === 'sdk-import'
-                        ? 'SDK import'
-                        : experiment.executionSource === 'synthetic'
-                          ? 'Synthetic'
-                          : 'Server run'}
-                    </span>
-                  </div>
-                  <div className="eval-run-metrics">
-                    <span>
-                      <strong>{experiment.completedCases.toLocaleString()}</strong> completed cases
-                    </span>
-                    <span>
-                      <strong>{duration(experiment.latencyMs)}</strong> avg. latency
-                    </span>
-                    <span>
-                      <strong>{money(experiment.costUsd)}</strong> recorded cost
-                      {experiment.unknownCostCount
-                        ? ` · ${experiment.unknownCostCount} unknown`
-                        : ''}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="eval-coverage-strip">
-              <span>
-                <span
-                  className={`status-dot ${data.comparable ? 'eval-positive' : 'eval-warning'}`}
-                />
-                <strong>
-                  {data.rows.length - counts.unmatched} / {data.rows.length}
-                </strong>{' '}
-                cases paired by row and trial
-              </span>
-              <span>
-                {data.comparable
-                  ? 'Same dataset revision and aligned cases'
-                  : 'Aggregate score deltas withheld: comparison is not aligned'}
-              </span>
-            </div>
-            <div className="eval-score-cards">
-              {Object.entries(data.deltas).map(([id, delta]) => (
-                <button
-                  key={id}
-                  className={`eval-score-card ${metric === id ? 'active' : ''}`}
-                  onClick={() => setMetric(metric === id ? '' : id)}
-                  aria-pressed={metric === id}
-                >
-                  <div>
-                    <span>{scoreName(id)}</span>
-                    <ArrowRight size={13} />
-                  </div>
+                ))}
+              </div>
+              <div className="eval-coverage-strip">
+                <span>
+                  <span
+                    className={`status-dot ${data.comparable ? 'eval-positive' : 'eval-warning'}`}
+                  />
                   <strong>
-                    <Score value={delta} delta />
-                  </strong>
-                  <small>
-                    <Score value={data.baseline.scores[id]} />
-                    <ArrowRight size={11} />
-                    <Score value={data.candidate.scores[id]} />
-                  </small>
-                  <span className="eval-metric-note">
-                    {data.comparable ? 'Mean score change' : 'Unaligned comparison'}
-                  </span>
-                </button>
-              ))}
+                    {data.rows.length - counts.unmatched} / {data.rows.length}
+                  </strong>{' '}
+                  paired cases
+                </span>
+                <span>
+                  {data.comparable
+                    ? 'Same revision · matched by row and trial'
+                    : 'Unaligned comparison · aggregate changes withheld'}
+                </span>
+              </div>
+              {!!Object.keys(data.deltas).length && (
+                <div className="table-wrap eval-score-summary">
+                  <table aria-label="Mean score comparison">
+                    <thead>
+                      <tr>
+                        <th>Score</th>
+                        <th>Baseline</th>
+                        <th>Candidate</th>
+                        <th title="Candidate minus baseline">Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(data.deltas).map(([id, delta]) => (
+                        <tr key={id} className={metric === id ? 'eval-selected-row' : ''}>
+                          <td>
+                            <button
+                              className="eval-score-filter"
+                              onClick={() => setMetric(metric === id ? '' : id)}
+                              aria-pressed={metric === id}
+                              title={`Filter cases by ${scoreName(id)}`}
+                            >
+                              {scoreName(id)}
+                              {metric === id && <span>Selected</span>}
+                            </button>
+                          </td>
+                          <td>
+                            <Score value={data.baseline.scores[id]} />
+                          </td>
+                          <td>
+                            <Score value={data.candidate.scores[id]} />
+                          </td>
+                          <td>
+                            <Score value={delta} delta />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             <div className="panel eval-table-panel">
               <div className="filter-bar">
@@ -1916,7 +1880,7 @@ function CompareView({
                   <Search size={15} />
                   <input
                     aria-label="Search comparison cases"
-                    placeholder="Search inputs, outputs, or errors…"
+                    placeholder="Search cases…"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                   />
@@ -2051,9 +2015,8 @@ function CompareView({
               />
             </div>
             <p className="eval-footnote">
-              Score changes are candidate minus baseline. Mixed changes mean some scores rose while
-              others fell. Rows without paired scores are never counted as improvements or
-              regressions.
+              Changes are candidate − baseline. Mixed means scores moved in both directions.
+              Unpaired scores are excluded from improvements and regressions.
             </p>
           </>
         )
@@ -2069,9 +2032,7 @@ function CompareView({
             {[selected.baseline, selected.candidate].map((row, i) => (
               <div className="eval-output-column" key={i}>
                 <div className="eval-output-heading">
-                  <span className={`eval-run-role ${i ? 'candidate' : ''}`}>
-                    {i ? 'CANDIDATE' : 'BASELINE'}
-                  </span>
+                  <span className="eval-run-role">{i ? 'Candidate' : 'Baseline'}</span>
                   <h3>{i ? data.candidate.name : data.baseline.name}</h3>
                   {row && (
                     <div className="eval-output-meta">

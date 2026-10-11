@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CommandMenu } from './command-menu';
 import { LogsPage, TraceTable, TraceDrawer } from './observability';
 export { TraceDrawer } from './observability';
@@ -22,7 +22,6 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
   Terminal,
   Waypoints,
   X,
@@ -60,7 +59,7 @@ import {
 } from './ui';
 import { DatasetsPage, ExperimentsPage } from './evaluation';
 import { PlaygroundPage, PromptsPage, ReviewPage, ScorersPage } from './tools';
-import { SettingsPage, initials, RoleBadge } from './access';
+import { SettingsPage, initials } from './access';
 import { AuthBoundary } from './auth';
 import { usePermissions, useSession } from './session';
 import { IntegrationsPage } from './integrations';
@@ -99,6 +98,10 @@ function WorkspaceApp() {
   const [create, setCreate] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [commands, setCommands] = useState(false);
+  const contentRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [page, projectId]);
   useEffect(() => {
     const shortcut = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -244,13 +247,37 @@ function WorkspaceApp() {
             </span>
           </a>
           <div className="workspace-picker">
-            <div className="workspace-mark">M</div>
-            <div>
-              <strong>Team workspace</strong>
-              <span className="tiny-label">
-                {auth.status.enabled ? 'PRIVATE WORKSPACE' : 'LOCAL DEVELOPMENT'}
-              </span>
-            </div>
+            <label className="project-select">
+              <span className="tiny-label">Project</span>
+              <select
+                aria-label="Current project"
+                value={projectId}
+                onChange={(e) => {
+                  clearSdkLink();
+                  setProjectId(e.target.value);
+                }}
+              >
+                {projects.data?.length ? (
+                  projects.data.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No projects</option>
+                )}
+              </select>
+              <ChevronDown size={13} />
+            </label>
+            <button
+              disabled={!canAdmin}
+              title={canAdmin ? 'Create a project' : 'An administrator can create projects'}
+              className="icon-button"
+              onClick={() => setCreate(true)}
+              aria-label="Create a project"
+            >
+              <Plus size={15} />
+            </button>
           </div>
           <button className="command-trigger" onClick={() => setCommands(true)}>
             <Search size={15} />
@@ -259,10 +286,9 @@ function WorkspaceApp() {
           </button>
           <nav aria-label="Main navigation">
             {[
-              { label: 'Observe', ids: ['overview', 'logs', 'review'] },
-              { label: 'Develop', ids: ['playground', 'prompts'] },
-              { label: 'Evaluate', ids: ['experiments', 'datasets', 'scorers'] },
-              { label: 'Connect', ids: ['integrations'] },
+              { label: 'Workspace', ids: ['overview', 'logs', 'experiments', 'review'] },
+              { label: 'Build', ids: ['playground', 'prompts', 'datasets', 'scorers'] },
+              { label: 'Configure', ids: ['integrations'] },
             ].map((group) => (
               <div key={group.label} className="nav-group">
                 <div className="nav-section-label">{group.label}</div>
@@ -277,14 +303,17 @@ function WorkspaceApp() {
                     >
                       <Icon size={17} strokeWidth={1.7} />
                       {label}
-                      {page === id && <span className="nav-active-dot" />}
                     </a>
                   ))}
               </div>
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <a href="#settings" className={`nav-link ${page === 'settings' ? 'active' : ''}`}>
+            <a
+              href="#settings"
+              className={`nav-link ${page === 'settings' ? 'active' : ''}`}
+              aria-current={page === 'settings' ? 'page' : undefined}
+            >
               <Settings size={17} />
               Settings & access
             </a>
@@ -319,45 +348,13 @@ function WorkspaceApp() {
               >
                 <Menu size={20} />
               </button>
-              <span className="breadcrumb-workspace">Workspace</span>
-              <ChevronRight size={14} />
-              <label className="project-select">
-                <select
-                  aria-label="Current project"
-                  value={projectId}
-                  onChange={(e) => {
-                    clearSdkLink();
-                    setProjectId(e.target.value);
-                  }}
-                >
-                  {projects.data?.length ? (
-                    projects.data.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">No projects</option>
-                  )}
-                </select>
-                <ChevronDown size={13} />
-              </label>
-              <button
-                disabled={!canAdmin}
-                title={canAdmin ? 'Create a project' : 'An administrator can create projects'}
-                className="icon-button"
-                onClick={() => setCreate(true)}
-                aria-label="Create a project"
-              >
-                <Plus size={15} />
-              </button>
-              <span className="breadcrumb-divider">/</span>
+              <span className="breadcrumb-workspace">MindTrust</span>
+              <ChevronRight size={13} />
               <span>{active?.label || 'Settings'}</span>
             </div>
             <div className="topbar-right">
               <span className="connection">
-                <i />
-                {auth.status.enabled ? 'Private workspace' : 'Local development'}
+                {auth.status.enabled ? 'Private workspace' : 'Local'}
               </span>
               <button
                 className="icon-button"
@@ -366,7 +363,6 @@ function WorkspaceApp() {
               >
                 <RefreshCw size={15} />
               </button>
-              <RoleBadge role={auth.session.principal.role} />
               {auth.status.enabled && (
                 <button
                   className="icon-button"
@@ -380,7 +376,7 @@ function WorkspaceApp() {
               )}
             </div>
           </div>
-          <main key={projectId} className="main-content">
+          <main key={projectId} ref={contentRef} className="main-content" data-page={page}>
             <ErrorBox message={signOutAction.error} />
             {projects.error && <ErrorBox message={projects.error} />}
             {!canWrite && (
@@ -426,12 +422,6 @@ function WorkspaceApp() {
               <Page />
             )}
           </main>
-          <footer className="app-footer">
-            <span>MindTrust by PreMan</span>
-            <a href="https://github.com/PreMan-Inc/MindTrust" target="_blank" rel="noreferrer">
-              Documentation & source ↗
-            </a>
-          </footer>
         </div>
         {toast && (
           <div className="toast" role="status">
@@ -574,32 +564,24 @@ function CreateProject({
   );
 }
 function OverviewPage() {
-  const { projectId, project, refresh, navigate, openExperiment } = useWorkspace();
+  const { projectId, refresh, navigate, openExperiment } = useWorkspace();
   const [traceId, setTraceId] = useState<string | null>(null);
+  const [recentView, setRecentView] = useState<'traces' | 'experiments'>('traces');
   const { data, loading, error } = useData<Overview>(`/overview?${qs({ projectId })}`, refresh);
   return (
     <>
       <PageHeader
-        eyebrow="PROJECT OVERVIEW"
-        title={project?.name || 'Overview'}
-        description="Monitor quality, latency, and cost. Follow each metric back to the run."
+        title="Overview"
         actions={
-          <Button permission="write" variant="primary" onClick={() => navigate('experiments')}>
-            <FlaskConical size={16} />
-            Experiments <ArrowRight size={15} />
+          <Button onClick={() => navigate('integrations')}>
+            <Plug size={15} />
+            Connect app
           </Button>
         }
       />
       {projectId === 'demo-project' && (
         <div className="demo-banner">
-          <Sparkles size={16} />
-          <span>
-            <strong>Demo project.</strong> Synthetic traces and evaluations. No model calls were
-            made.
-          </span>
-          <button onClick={() => navigate('settings')}>
-            Connect your application <ArrowRight size={13} />
-          </button>
+          <span>Demo data · Synthetic traces and evaluations</span>
         </div>
       )}
       <ErrorBox message={error} />
@@ -608,16 +590,11 @@ function OverviewPage() {
       ) : (
         data && (
           <>
-            <div className="stats-grid">
+            <div className="stats-grid overview-metrics">
               <Stat
                 label="Total traces"
                 value={numeric(data.traceCount)}
-                detail={
-                  <>
-                    <span className="mini-dot green-dot" />
-                    {numeric(data.traceCount - data.errorCount)} successful runs
-                  </>
-                }
+                detail={<>{numeric(data.traceCount - data.errorCount)} successful runs</>}
                 icon={<Activity size={17} />}
               />
               <Stat
@@ -633,7 +610,7 @@ function OverviewPage() {
                 icon={<Waypoints size={17} />}
               />
               <Stat
-                label="Known model spend"
+                label="Model spend"
                 value={money(data.knownCostUsd)}
                 detail={
                   data.unknownCostCount
@@ -646,13 +623,9 @@ function OverviewPage() {
             <div className="overview-charts">
               <Section
                 title="Trace activity"
-                detail="Trace volume across the recorded period"
                 actions={
                   <div className="chart-legend">
-                    <span>
-                      <i />
-                      Traces
-                    </span>
+                    <span>Traces</span>
                     <span>
                       <i className="red" />
                       Errors
@@ -662,7 +635,7 @@ function OverviewPage() {
               >
                 <ActivityChart series={data.series} />
               </Section>
-              <Section title="Model usage" detail="Where your tokens go" className="model-panel">
+              <Section title="Model usage" className="model-panel">
                 <div className="model-total">
                   {numeric(data.totalTokens)}
                   <span>total tokens</span>
@@ -711,86 +684,97 @@ function OverviewPage() {
                 </div>
               </Section>
             </div>
-            <Section
-              title="Recent experiments"
-              detail="Latest evaluation runs across this project"
-              actions={
-                <Button variant="ghost" onClick={() => navigate('experiments')}>
-                  All experiments <ArrowRight size={14} />
-                </Button>
-              }
-            >
-              {data.recentExperiments.length ? (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Experiment</th>
-                        <th>Status</th>
-                        <th>Cases</th>
-                        <th title="Mean across the recorded score metrics">Mean score</th>
-                        <th>Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.recentExperiments.map((e) => {
-                        const scores = Object.values(e.scores).filter(
-                          (s): s is number => s !== null,
-                        );
-                        return (
-                          <tr key={e.id}>
-                            <td>
-                              <button className="row-title" onClick={() => openExperiment(e.id)}>
-                                <span className="table-icon">
-                                  <FlaskConical size={14} />
-                                </span>
-                                {e.name}
-                              </button>
-                            </td>
-                            <td>
-                              <Status value={e.status} />
-                            </td>
-                            <td className="tabular">
-                              {e.completedCases} / {e.totalCases}
-                            </td>
-                            <td>
-                              <Score
-                                value={
-                                  scores.length
-                                    ? scores.reduce((a, b) => a + b, 0) / scores.length
-                                    : null
-                                }
-                              />
-                            </td>
-                            <td className="muted">{date(e.createdAt)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+            <section className="panel recent-activity">
+              <div className="panel-head">
+                <div className="activity-tabs" role="group" aria-label="Recent activity">
+                  <button
+                    aria-pressed={recentView === 'traces'}
+                    onClick={() => setRecentView('traces')}
+                  >
+                    Recent traces
+                  </button>
+                  <button
+                    aria-pressed={recentView === 'experiments'}
+                    onClick={() => setRecentView('experiments')}
+                  >
+                    Experiments
+                  </button>
                 </div>
-              ) : (
-                <Empty
-                  title="Your first experiment starts here"
-                  description="Create a dataset and test how your agent performs."
-                  action={<Button onClick={() => navigate('datasets')}>Create a dataset</Button>}
-                />
-              )}
-            </Section>
-            <Section
-              title="Recent traces"
-              actions={
-                <Button variant="ghost" onClick={() => navigate('logs')}>
-                  Explore logs <ArrowRight size={14} />
+                <Button
+                  variant="ghost"
+                  onClick={() => navigate(recentView === 'traces' ? 'logs' : 'experiments')}
+                >
+                  View all <ArrowRight size={14} />
                 </Button>
-              }
-            >
-              <TraceTable traces={data.recentTraces} onSelect={setTraceId} />
-            </Section>
-            <div className="bottom-note">
-              <span className="mini-dot green-dot" />
-              Metrics cover all recorded traces in this project.
-            </div>
+              </div>
+              {recentView === 'traces' ? (
+                <TraceTable traces={data.recentTraces.slice(0, 5)} onSelect={setTraceId} />
+              ) : (
+                <>
+                  {data.recentExperiments.length ? (
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Experiment</th>
+                            <th>Status</th>
+                            <th>Cases</th>
+                            <th title="Mean across the recorded score metrics">Mean score</th>
+                            <th>Created</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.recentExperiments.slice(0, 5).map((e) => {
+                            const scores = Object.values(e.scores).filter(
+                              (s): s is number => s !== null,
+                            );
+                            return (
+                              <tr key={e.id}>
+                                <td>
+                                  <button
+                                    className="row-title"
+                                    onClick={() => openExperiment(e.id)}
+                                  >
+                                    <span className="table-icon">
+                                      <FlaskConical size={14} />
+                                    </span>
+                                    {e.name}
+                                  </button>
+                                </td>
+                                <td>
+                                  <Status value={e.status} />
+                                </td>
+                                <td className="tabular">
+                                  {e.completedCases} / {e.totalCases}
+                                </td>
+                                <td>
+                                  <Score
+                                    value={
+                                      scores.length
+                                        ? scores.reduce((a, b) => a + b, 0) / scores.length
+                                        : null
+                                    }
+                                  />
+                                </td>
+                                <td className="muted">{date(e.createdAt)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <Empty
+                      title="Your first experiment starts here"
+                      description="Create a dataset and test how your agent performs."
+                      action={
+                        <Button onClick={() => navigate('datasets')}>Create a dataset</Button>
+                      }
+                    />
+                  )}
+                </>
+              )}
+            </section>
           </>
         )
       )}
@@ -805,7 +789,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
     );
   const max = Math.max(1, ...series.map((s) => s.traces));
   const width = 800,
-    height = 190;
+    height = 155;
   const barWidth = Math.min(35, ((width - 40) / series.length) * 0.48);
   const x = (i: number) => 32 + ((i + 0.5) / series.length) * (width - 50);
   const y = (n: number) => height - 15 - (n / max) * (height - 40);
