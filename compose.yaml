@@ -6,10 +6,17 @@ services:
     environment:
       MINDTRUST_ADMIN_TOKEN: ${MINDTRUST_ADMIN_TOKEN:?Set MINDTRUST_ADMIN_TOKEN in .env before starting Docker}
       MINDTRUST_SEED: ${MINDTRUST_SEED:-false}
+      MINDTRUST_ALLOWED_ORIGINS: ${MINDTRUST_ALLOWED_ORIGINS:?Set an exact HTTPS UI origin for production}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - mindtrust-data:/app/data
     restart: unless-stopped
+    init: true
+    stop_grace_period: 50s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 volumes:
   mindtrust-data:

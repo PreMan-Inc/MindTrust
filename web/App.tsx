@@ -13,6 +13,8 @@ import {
   Database,
   FlaskConical,
   Layers3,
+  Plug,
+  LogOut,
   Menu,
   MessageSquare,
   Plus,
@@ -27,6 +29,7 @@ import {
 } from 'lucide-react';
 import type {
   Dataset,
+  Experiment,
   Overview,
   Project,
   ServerInfo,
@@ -69,7 +72,12 @@ import {
   Status,
 } from './ui';
 import { DatasetsPage, ExperimentsPage } from './evaluation';
-import { PlaygroundPage, PromptsPage, ReviewPage, ScorersPage, SettingsPage } from './tools';
+import { PlaygroundPage, PromptsPage, ReviewPage, ScorersPage } from './tools';
+import { SettingsPage, initials, RoleBadge } from './access';
+import { AuthBoundary } from './auth';
+import { usePermissions, useSession } from './session';
+import { IntegrationsPage } from './integrations';
+import { PENDING_SDK_LINK_KEY, parseSdkExperimentLink, uniqueNamedResource } from './deep-links';
 const navigation = [
   { id: 'overview', label: 'Overview', icon: BarChart3 },
   { id: 'logs', label: 'Logs', icon: Activity },
@@ -79,18 +87,42 @@ const navigation = [
   { id: 'playground', label: 'Playground', icon: Terminal },
   { id: 'scorers', label: 'Scorers', icon: ShieldCheck },
   { id: 'review', label: 'Review', icon: BookOpen },
+  { id: 'integrations', label: 'Integrations', icon: Plug },
 ];
 export default function App() {
+  return (
+    <AuthBoundary>
+      <WorkspaceApp />
+    </AuthBoundary>
+  );
+}
+function WorkspaceApp() {
+  const auth = useSession();
+  const { canAdmin, canWrite } = usePermissions();
+  const signOutAction = useAction();
   const [page, setPage] = useState(() => location.hash.slice(1) || 'overview');
   const [refresh, setRefresh] = useState(0);
-  const [projectId, setProjectId] = useState('demo-project');
+  const [projectId, setProjectId] = useState('');
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [create, setCreate] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [sdkLink, setSdkLink] = useState(() => {
+    const direct = parseSdkExperimentLink(location.pathname);
+    return direct.kind === 'none'
+      ? parseSdkExperimentLink(sessionStorage.getItem(PENDING_SDK_LINK_KEY) || '')
+      : direct;
+  });
+  const [sdkLinkError, setSdkLinkError] = useState('');
+  const [linkedExperiment, setLinkedExperiment] = useState<{
+    projectId: string;
+    id: string;
+  } | null>(null);
   const projects = useData<Project[]>('/projects', refresh);
   const info = useData<ServerInfo>('/info', refresh);
   useEffect(() => {
     const handler = () => {
+      clearSdkLink();
       setPage(location.hash.slice(1) || 'overview');
       setMobile(false);
     };
@@ -98,13 +130,50 @@ export default function App() {
     return () => removeEventListener('hashchange', handler);
   }, []);
   useEffect(() => {
-    if (
-      projects.data?.length &&
-      projectId === 'demo-project' &&
-      !projects.data.some((p) => p.id === projectId)
-    )
-      setProjectId(projects.data[0].id);
-  }, [projects.data, projectId]);
+    sessionStorage.removeItem(PENDING_SDK_LINK_KEY);
+  }, []);
+  useEffect(() => {
+    if (sdkLink.kind === 'none') return;
+    if (sdkLink.kind === 'invalid') {
+      setSdkLinkError(sdkLink.message);
+      return;
+    }
+    if (projects.loading || !projects.data) return;
+    let active = true;
+    setSdkLinkError('');
+    void (async () => {
+      try {
+        const targetProject = uniqueNamedResource(projects.data!, sdkLink.projectName, 'project');
+        const experiments = await api<Experiment[]>(
+          `/experiments?${qs({ projectId: targetProject.id })}`,
+        );
+        const target = uniqueNamedResource(experiments, sdkLink.experimentName, 'experiment');
+        if (!active) return;
+        setProjectId(targetProject.id);
+        setLinkedExperiment({ projectId: targetProject.id, id: target.id });
+        setPage('experiments');
+        history.replaceState(null, '', `${sdkLink.path}${location.search}#experiments`);
+        setSdkLink({ kind: 'none' });
+      } catch (e) {
+        if (active) setSdkLinkError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [sdkLink, projects.data, projects.loading]);
+  useEffect(() => {
+    if (sdkLink.kind !== 'none') return;
+    if (!projects.data || projects.loading) return;
+    if (pendingProjectId) {
+      if (projects.data.some((p) => p.id === pendingProjectId)) {
+        setProjectId(pendingProjectId);
+        setPendingProjectId(null);
+      }
+      return;
+    }
+    if (!projects.data.some((p) => p.id === projectId)) setProjectId(projects.data[0]?.id || '');
+  }, [projects.data, projects.loading, projectId, pendingProjectId, sdkLink.kind]);
   useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(''), 4500);
@@ -112,7 +181,15 @@ export default function App() {
     }
   }, [toast]);
   function navigate(id: string) {
+    clearSdkLink();
     location.hash = id;
+  }
+  function clearSdkLink() {
+    setSdkLink({ kind: 'none' });
+    setSdkLinkError('');
+    setLinkedExperiment(null);
+    if (location.pathname.startsWith('/app/'))
+      history.replaceState(null, '', `/${location.search}${location.hash}`);
   }
   const active = navigation.find((n) => n.id === page);
   const project = projects.data?.find((p) => p.id === projectId);
@@ -128,6 +205,7 @@ export default function App() {
         scorers: ScorersPage,
         review: ReviewPage,
         settings: SettingsPage,
+        integrations: IntegrationsPage,
       } as Record<string, React.ComponentType>
     )[page] || OverviewPage;
   return (
@@ -162,9 +240,9 @@ export default function App() {
             <div className="workspace-mark">P</div>
             <div>
               <span className="tiny-label">WORKSPACE</span>
-              <strong>PreMan</strong>
+              <strong>Team workspace</strong>
             </div>
-            <Badge>Local</Badge>
+            <Badge>{auth.status.enabled ? 'Private' : 'Local'}</Badge>
           </div>
           <div className="nav-section-label">BUILD WITH CONFIDENCE</div>
           <nav aria-label="Main navigation">
@@ -194,13 +272,18 @@ export default function App() {
             </div>
             <a href="#settings" className={`nav-link ${page === 'settings' ? 'active' : ''}`}>
               <Settings size={17} />
-              Settings & API keys
+              Settings & access
             </a>
             <div className="profile">
-              <div className="avatar">MT</div>
+              <div className="avatar">{initials(auth.session.principal.name)}</div>
               <div>
-                <strong>MindTrust workspace</strong>
-                <span>Built by PreMan · v{info.data?.version || '0.1'}</span>
+                <strong>{auth.session.principal.name}</strong>
+                <span>
+                  {auth.session.principal.role} ·{' '}
+                  {auth.session.principal.projectIds === null
+                    ? 'All projects'
+                    : `${auth.session.principal.projectIds.length} ${auth.session.principal.projectIds.length === 1 ? 'project' : 'projects'}`}
+                </span>
               </div>
             </div>
           </div>
@@ -229,18 +312,25 @@ export default function App() {
                   aria-label="Current project"
                   value={projectId}
                   onChange={(e) => {
+                    clearSdkLink();
                     setProjectId(e.target.value);
                   }}
                 >
-                  {projects.data?.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  )) || <option value="demo-project">Select project</option>}
+                  {projects.data?.length ? (
+                    projects.data.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No projects</option>
+                  )}
                 </select>
                 <ChevronDown size={13} />
               </label>
               <button
+                disabled={!canAdmin}
+                title={canAdmin ? 'Create a project' : 'An administrator can create projects'}
                 className="icon-button"
                 onClick={() => setCreate(true)}
                 aria-label="Create a project"
@@ -253,7 +343,7 @@ export default function App() {
             <div className="topbar-right">
               <span className="connection">
                 <i />
-                Local workspace
+                {auth.status.enabled ? 'Private workspace' : 'Local development'}
               </span>
               <button
                 className="icon-button"
@@ -262,26 +352,61 @@ export default function App() {
               >
                 <RefreshCw size={15} />
               </button>
-              <span className="avatar small">P</span>
+              <RoleBadge role={auth.session.principal.role} />
+              {auth.status.enabled && (
+                <button
+                  className="icon-button"
+                  aria-label="Sign out"
+                  title="Sign out"
+                  disabled={signOutAction.busy}
+                  onClick={() => signOutAction.run(auth.signOut)}
+                >
+                  <LogOut size={15} />
+                </button>
+              )}
             </div>
           </div>
           <main key={projectId} className="main-content">
-            {projects.error && page !== 'settings' && (
-              <div className="auth-warning">
-                <ErrorBox message={projects.error} />
-                <Button onClick={() => navigate('settings')}>Configure access</Button>
+            <ErrorBox message={signOutAction.error} />
+            {projects.error && <ErrorBox message={projects.error} />}
+            {!canWrite && (
+              <div className="permission-banner">
+                <ShieldCheck size={15} />
+                <span>
+                  You have viewer access. You can inspect and export data; changes require an editor
+                  or administrator.
+                </span>
               </div>
             )}
-            {projects.data?.length === 0 && page !== 'settings' ? (
-              <Empty
-                title="Create your first project"
-                description="Start with a project to collect your traces, datasets, and experiments."
-                action={
-                  <Button variant="primary" onClick={() => setCreate(true)}>
-                    <Plus size={15} />
-                    Create project
-                  </Button>
+            {sdkLink.kind !== 'none' ? (
+              sdkLinkError || projects.error ? (
+                <Section title="Unable to open this SDK link">
+                  <div className="integration-section-body">
+                    <ErrorBox message={sdkLinkError || projects.error} />
+                    <Button onClick={() => navigate('experiments')}>
+                      Browse accessible experiments
+                    </Button>
+                  </div>
+                </Section>
+              ) : (
+                <Loading />
+              )
+            ) : page === 'settings' || page === 'integrations' ? (
+              <Page />
+            ) : projects.loading && !projects.data ? (
+              <Loading />
+            ) : !projectId || projects.data?.length === 0 ? (
+              <WorkspaceOnboarding
+                canCreate={canAdmin}
+                onCreate={() => setCreate(true)}
+                onSettings={() => navigate('settings')}
+              />
+            ) : page === 'experiments' ? (
+              <ExperimentsPage
+                linkedExperimentId={
+                  linkedExperiment?.projectId === projectId ? linkedExperiment.id : undefined
                 }
+                onLeaveLinkedExperiment={clearSdkLink}
               />
             ) : (
               <Page />
@@ -291,7 +416,7 @@ export default function App() {
             <span>MindTrust · Agent observability & evaluations</span>
             <span>
               <i className="footer-dot" />
-              Local SQLite storage
+              Workspace SQLite storage
             </span>
           </footer>
         </div>
@@ -308,6 +433,7 @@ export default function App() {
           <CreateProject
             onClose={() => setCreate(false)}
             onCreated={(p) => {
+              setPendingProjectId(p.id);
               setProjectId(p.id);
               setRefresh((x) => x + 1);
               setCreate(false);
@@ -317,6 +443,65 @@ export default function App() {
         )}
       </div>
     </WorkspaceContext.Provider>
+  );
+}
+function WorkspaceOnboarding({
+  canCreate,
+  onCreate,
+  onSettings,
+}: {
+  canCreate: boolean;
+  onCreate: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <div className="workspace-onboarding">
+      <div className="eyebrow">A WORKSPACE FOR YOUR TEAM</div>
+      <h1>{canCreate ? 'Start with your first project.' : 'Your workspace is ready.'}</h1>
+      <p>
+        {canCreate
+          ? 'Keep an application’s traces, evaluation datasets, and experiment history together.'
+          : 'An administrator can assign projects to your account. You’ll see those projects here as soon as access is granted.'}
+      </p>
+      <div className="onboarding-cards">
+        <div>
+          <span className="onboarding-number">01</span>
+          <Database size={22} />
+          <h3>{canCreate ? 'Create a project' : 'Get project access'}</h3>
+          <p>
+            {canCreate
+              ? 'Choose a name for the agent or application your team is building.'
+              : 'Ask your workspace administrator to assign the projects you need.'}
+          </p>
+          {canCreate && (
+            <Button variant="primary" onClick={onCreate}>
+              <Plus size={14} />
+              Create project
+            </Button>
+          )}
+        </div>
+        <div>
+          <span className="onboarding-number">02</span>
+          <Plug size={22} />
+          <h3>Connect your application</h3>
+          <p>
+            Use scoped API keys with the supported Braintrust SDK, native ingestion, or
+            OpenTelemetry JSON.
+          </p>
+          <Badge>After project setup</Badge>
+        </div>
+        <div>
+          <span className="onboarding-number">03</span>
+          <ShieldCheck size={22} />
+          <h3>Give your team access</h3>
+          <p>Assign viewer, editor, and administrator roles in workspace settings.</p>
+          <Button onClick={onSettings}>
+            View workspace access
+            <ArrowRight size={14} />
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 function CreateProject({
@@ -372,7 +557,7 @@ function OverviewPage() {
         title="A clearer view of your agents."
         description={`Monitor ${project?.name || 'your project'}, understand failures, and turn what you learn into better evaluations.`}
         actions={
-          <Button variant="primary" onClick={() => navigate('experiments')}>
+          <Button permission="write" variant="primary" onClick={() => navigate('experiments')}>
             <FlaskConical size={16} />
             Run an evaluation <ArrowRight size={15} />
           </Button>
@@ -1034,6 +1219,7 @@ export function TraceDrawer({ id, onClose }: { id: string; onClose: () => void }
                   ))}
                 </select>
                 <Button
+                  permission="write"
                   disabled={!datasetId || !datasetExpected.trim() || action.busy}
                   onClick={() =>
                     action.run(async () => {

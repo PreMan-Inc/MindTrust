@@ -2,9 +2,9 @@
 
 **Agent observability and evaluation, by PreMan.**
 
-MindTrust is a self-hosted application for tracing agents, curating regression datasets, running evaluations, and comparing changes. It is an independently built first release informed by a detailed study of Braintrust’s publicly documented workflows.
+MindTrust is an application for tracing agents, curating regression datasets, running evaluations, and comparing changes. Version **0.2 is a release candidate for an isolated hosted customer workspace**, with a self-hosted option. It adds team access, optional OIDC sign-in, scoped credentials, compatibility tests against the official Braintrust SDK, and recovery tooling.
 
-The goal is a lower-cost, faster alternative. **Comparative cost and performance have not yet been established.** This release implements the core feedback loop; it does not claim full Braintrust or enterprise parity.
+The goal is a lower-cost, faster alternative. **Comparative cost and performance have not yet been established.** A representative customer pilot is required before claiming a production replacement for that team; this release does not claim universal Braintrust parity.
 
 ![MindTrust dashboard with clearly labeled synthetic data](docs/images/mindtrust-overview.jpg)
 
@@ -41,7 +41,9 @@ Then open **http://127.0.0.1:4310**.
 - **Prompts and playground:** version prompt text, render input variables, test deterministic templates, and execute real model calls when a provider is configured.
 - **Review:** save judgments, comments, and expected outputs against traces and evaluation cases. Human review does not rewrite automatic scores.
 - **Integrations:** a dependency-free Node.js tracing/evaluation SDK and an OTLP/HTTP **JSON trace** receiver with parent relationships and retry-safe span IDs.
-- **Instance access:** optional administrator token, hashed API keys, key revocation, origin checks, request limits, and loopback defaults.
+- **Team access:** named accounts, salted scrypt password hashes, optional OIDC, HttpOnly sessions, CSRF protection, viewer/editor/admin roles, project scopes, expiring/revocable API keys, and audit events.
+- **Braintrust integration:** a versioned compatibility adapter exercised with the official SDK over real HTTP. See the [exact supported workflows and exclusions](docs/braintrust-compatibility.md).
+- **Operations:** SQL-based trace pagination/aggregates, bounded evaluation scheduling, health/readiness probes, protected Prometheus metrics, redacted request logs, single-writer startup protection, and verified online backup/restore.
 
 Everything displayed as sample activity is synthetic. User-created objects use the same persisted API and storage.
 
@@ -74,7 +76,7 @@ await client.trace(
 await client.flush();
 ```
 
-`flush()` is explicit: await it before exiting or ending a short-lived request. Failed deliveries retain their batch for retry. Buffer overflow throws; if the task itself also failed, that original error is preserved and `client.lastLoggingError` records the logging failure. The SDK is Node-only and does not implement the Braintrust SDK protocol.
+`flush()` is explicit: await it before exiting or ending a short-lived request. Failed deliveries retain their batch for retry. Buffer overflow throws; if the task itself also failed, that original error is preserved and `client.lastLoggingError` records the logging failure. The native SDK is Node-only. The server also exposes the separately tested Braintrust compatibility adapter.
 
 Run a complete local SDK evaluation example:
 
@@ -105,17 +107,17 @@ The receiver accepts `resourceSpans` / `scopeSpans`, preserves trace/span IDs an
 
 ## Authentication and deployment
 
-Local development is unauthenticated by default and binds loopback. Set `MINDTRUST_ADMIN_TOKEN` to enable authentication. Paste that token in **Settings → Access** for the UI; generate revocable instance API keys for applications. API keys have access to the whole instance, not per-project roles.
+Local development is unauthenticated by default and binds loopback. Set `MINDTRUST_ADMIN_TOKEN` to enable authentication. The sign-in screen provides a bootstrap-token option for creating named administrators and teammates. Daily access uses personal accounts or configured OIDC; applications use scoped, expiring keys. Team administration and audit history live in **Settings & access**.
 
-Non-loopback binding requires an administrator token. For a remote origin behind a TLS reverse proxy, configure `MINDTRUST_ALLOWED_ORIGINS` as a comma-separated list of exact origins. Network and TLS configuration remain the operator’s responsibility.
+Production mode requires a bootstrap secret of at least 32 characters and exact HTTPS `MINDTRUST_ALLOWED_ORIGINS`. It enables Secure session cookies and disables new demo seeding in the entry point. The supplied hosted topology uses Caddy for TLS and a private application network, with a separate service/volume/secrets per customer.
 
-A Dockerfile and Compose configuration are included. Configure a strong `MINDTRUST_ADMIN_TOKEN` in `.env`, then:
+A Dockerfile and Compose configurations are included. For a customer deployment, fill an operator-managed environment file from `deploy/production.env.example`, then:
 
 ```sh
-docker compose up --build
+docker compose --env-file /secure/customer.env -f deploy/compose.production.yaml -p customer-workspace up --build -d
 ```
 
-Compose binds the host port to loopback and persists SQLite in a named volume. This is a single-instance deployment; do not share the same database across multiple API processes. See [operating boundaries](docs/architecture.md) for recovery and backup considerations.
+See the [production runbook](docs/production-operations.md) for DNS, TLS, identity provisioning, backups, monitoring, upgrades, and rollback. Each workspace has one writer; do not scale API replicas over a shared SQLite file. Cloud provisioning, offsite backup scheduling, and a live production rollout are operator tasks, not services automatically created by these files.
 
 ## Verify
 
@@ -123,7 +125,7 @@ Compose binds the host port to loopback and persists SQLite in a named volume. T
 npm run check
 ```
 
-The suite exercises API persistence, dataset snapshots, evaluations, auth and revocation, imports, real HTTP provider contracts using a local fixture, OTLP, and SDK concurrency/error handling. No paid provider credentials are needed for tests. CI runs the checks on Node.js 24.
+The suite exercises persistence, snapshots, official SDK contracts, scoped access, session/CSRF security, signed OIDC flows with a mock issuer, recovery, concurrency, and provider/OTLP behavior. CI also builds and smoke-tests the production container. No paid model credentials are needed. See [release evidence](docs/release-0.2.md), [SDK contracts](docs/braintrust-compatibility.md), and the [local synthetic benchmark](docs/benchmark-local.json).
 
 ## Research and design
 
@@ -131,9 +133,11 @@ The suite exercises API persistence, dataset snapshots, evaluations, auth and re
 - [API contract](docs/api-contract.md): routes and payload shapes.
 - [Architecture](docs/architecture.md): implementation choices, comparison/cost semantics, and operational boundaries.
 - [Migration guide](docs/migration.md): field coverage and a staged migration procedure.
+- [Production runbook](docs/production-operations.md): customer isolation, operations, backup/restore, and release boundaries.
+- [Braintrust compatibility](docs/braintrust-compatibility.md): pinned official SDK workflows and unsupported features.
 
 ## What remains before a full replacement
 
-This release does not include Brainstore/BTQL, full Braintrust API/SDK compatibility, distributed storage or workers, remote code sandboxes, online scoring automations, streaming/multi-provider gateway routing, attachments, alerts, assigned/blinded human-review queues, Loop/Topics/Patterns, or enterprise SSO/RBAC/audit controls. The research document describes these capabilities and their acceptance criteria.
+This release does not include Brainstore/general SQL or BTQL, full Braintrust API/SDK compatibility, distributed storage or workers, remote code sandboxes, online scoring automations, streaming/multi-provider gateway routing, attachments, alerts, assigned/blinded human-review queues, Loop/Topics/Patterns, SAML/SCIM, or high availability. OIDC, project-scoped roles, and audit events are implemented; compliance certification and independent penetration testing are not established. The research document describes the wider product requirements.
 
 The practical next step is to dual-run a real customer workflow and measure identical workloads for correctness, end-to-end latency, total cost, and operational reliability. Do not retire an existing service on the basis of synthetic demo results.

@@ -1,16 +1,40 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Json, Project } from '../shared/types';
 export const TOKEN_KEY = 'mindtrust-session-token';
+export const SESSION_EXPIRED_EVENT = 'mindtrust-session-expired';
+let csrfToken: string | null = null;
+export function setCsrfToken(value: string | null) {
+  csrfToken = value;
+}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem(TOKEN_KEY);
   const headers = new Headers(init?.headers);
   if (init?.body) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`/api${path}`, { ...init, headers });
+  if (!token && csrfToken && init?.method && !['GET', 'HEAD'].includes(init.method.toUpperCase()))
+    headers.set('X-CSRF-Token', csrfToken);
+  const response = await fetch(`/api${path}`, { ...init, headers, credentials: 'same-origin' });
   const data = await response
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/auth/'))
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    const fallback =
+      response.status === 403
+        ? 'Your workspace role or project access does not permit this action. Ask a workspace administrator for access.'
+        : `Request failed (${response.status})`;
+    throw new ApiError(data.error || fallback, response.status);
+  }
   return data as T;
 }
 export const post = <T,>(path: string, data: unknown) =>

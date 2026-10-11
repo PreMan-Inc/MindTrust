@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { usePermissions } from './session';
 import {
   ArrowDownToLine,
   ArrowLeftRight,
@@ -84,7 +85,7 @@ export function DatasetsPage() {
         title="Datasets"
         description="Curate meaningful examples. Build a versioned source of truth."
         actions={
-          <Button variant="primary" onClick={() => setCreate(true)}>
+          <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={16} />
             Create dataset
           </Button>
@@ -102,7 +103,9 @@ export function DatasetsPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="count-label">{filtered?.length || 0} datasets</span>
+          <span className="count-label">
+            {filtered?.length || 0} {filtered?.length === 1 ? 'dataset' : 'datasets'}
+          </span>
         </div>
         {loading && !data ? (
           <Loading />
@@ -137,7 +140,7 @@ export function DatasetsPage() {
             title="Create a reliable starting point"
             description="Add your own examples, import JSON, or save a production trace."
             action={
-              <Button onClick={() => setCreate(true)}>
+              <Button permission="write" onClick={() => setCreate(true)}>
                 <Plus size={15} />
                 Create dataset
               </Button>
@@ -207,6 +210,7 @@ function CreateDataset({
   );
 }
 function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
+  const { canWrite } = usePermissions();
   const { refresh, refreshAll, notify } = useWorkspace();
   const [version, setVersion] = useState('');
   const detail = useData<DatasetDetail>(
@@ -242,11 +246,15 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
               <ArrowDownToLine size={15} />
               Export
             </Button>
-            <Button disabled={historical} onClick={() => setImporting(true)}>
+            <Button disabled={historical || !canWrite} onClick={() => setImporting(true)}>
               <ArrowUpFromLine size={15} />
               Import JSON
             </Button>
-            <Button variant="primary" disabled={historical} onClick={() => setEditing('new')}>
+            <Button
+              variant="primary"
+              disabled={historical || !canWrite}
+              onClick={() => setEditing('new')}
+            >
               <Plus size={15} />
               Add example
             </Button>
@@ -264,7 +272,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
         <div className="filter-bar">
           <span className="count-label">
             <Database size={15} />
-            {data?.rows.length || 0} examples
+            {data?.rows.length || 0} {data?.rows.length === 1 ? 'example' : 'examples'}
           </span>
           <div className="filter-spacer" />
           <History size={15} />
@@ -278,7 +286,8 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
             </option>
             {data?.versions.map((v) => (
               <option key={v.version} value={v.version}>
-                v{v.version} · {v.rowCount} examples · {date(v.createdAt)}
+                v{v.version} · {v.rowCount} {v.rowCount === 1 ? 'example' : 'examples'} ·{' '}
+                {date(v.createdAt)}
               </option>
             ))}
           </select>
@@ -306,7 +315,11 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                       <small className="row-id">{row.id.slice(0, 20)}</small>
                     </td>
                     <td>
-                      <span className="cell-json">{compact(row.expected)}</span>
+                      {row.hasExpected === false ? (
+                        <span className="muted">Not provided</span>
+                      ) : (
+                        <span className="cell-json">{compact(row.expected)}</span>
+                      )}
                     </td>
                     <td>
                       <div className="tag-list">
@@ -320,13 +333,13 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                         <button
                           className="icon-button"
                           onClick={() => setEditing(row)}
-                          aria-label={historical ? 'View example' : 'Edit example'}
+                          aria-label={historical || !canWrite ? 'View example' : 'Edit example'}
                         >
                           <Pencil size={14} />
                         </button>
                         <button
                           className="icon-button danger-icon"
-                          disabled={historical}
+                          disabled={historical || !canWrite}
                           onClick={() => setDeleting(row)}
                           aria-label="Delete example"
                         >
@@ -344,7 +357,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
             title="No examples yet"
             description="Add an input and its expected output to start evaluating."
             action={
-              <Button disabled={historical} onClick={() => setEditing('new')}>
+              <Button disabled={historical || !canWrite} onClick={() => setEditing('new')}>
                 Add your first example
               </Button>
             }
@@ -355,7 +368,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
         <DatasetRowEditor
           datasetId={id}
           row={editing === 'new' ? undefined : editing}
-          readOnly={historical}
+          readOnly={historical || !canWrite}
           onClose={() => setEditing(null)}
         />
       )}{' '}
@@ -371,6 +384,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
           <div className="form-actions">
             <Button onClick={() => setDeleting(null)}>Cancel</Button>
             <Button
+              permission="write"
               variant="danger"
               disabled={action.busy}
               onClick={() =>
@@ -407,8 +421,9 @@ function DatasetRowEditor({
   onClose: () => void;
 }) {
   const { refreshAll, notify } = useWorkspace();
-  const [input, setInput] = useState(JSON.stringify(row?.input ?? { question: '' }, null, 2));
-  const [expected, setExpected] = useState(JSON.stringify(row?.expected ?? '', null, 2));
+  const [input, setInput] = useState(JSON.stringify(row ? row.input : { question: '' }, null, 2));
+  const [hasExpected, setHasExpected] = useState(row ? row.hasExpected !== false : false);
+  const [expected, setExpected] = useState(JSON.stringify(row ? row.expected : '', null, 2));
   const [metadata, setMetadata] = useState(JSON.stringify(row?.metadata ?? {}, null, 2));
   const [tags, setTags] = useState(row?.tags.join(', ') || '');
   const action = useAction();
@@ -430,7 +445,7 @@ function DatasetRowEditor({
                 {
                   ...(row ? { id: row.id } : {}),
                   input: parseJson(input),
-                  expected: parseJson(expected, 'Expected output'),
+                  ...(hasExpected ? { expected: parseJson(expected, 'Expected output') } : {}),
                   metadata: meta,
                   tags: tags
                     .split(',')
@@ -455,14 +470,35 @@ function DatasetRowEditor({
               onChange={(e) => setInput(e.target.value)}
             />
           </Field>
-          <Field label="Expected output (JSON)">
-            <textarea
-              className="code-input tall"
-              readOnly={readOnly}
-              value={expected}
-              onChange={(e) => setExpected(e.target.value)}
-            />
-          </Field>
+          <div>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={hasExpected}
+                disabled={readOnly}
+                onChange={(e) => setHasExpected(e.target.checked)}
+              />
+              <span>
+                <strong>Include expected output</strong>
+                <small>Leave unchecked when no ground truth is provided.</small>
+              </span>
+            </label>
+            {hasExpected ? (
+              <Field label="Expected output (JSON)" hint="JSON null is an explicit expected value.">
+                <textarea
+                  className="code-input tall"
+                  readOnly={readOnly}
+                  value={expected}
+                  onChange={(e) => setExpected(e.target.value)}
+                />
+              </Field>
+            ) : (
+              <div className="json-block">
+                <div className="json-label">Expected output</div>
+                <pre className="muted">Not provided</pre>
+              </div>
+            )}
+          </div>
         </div>
         <Field label="Tags" hint="Comma-separated labels">
           <input
@@ -540,22 +576,40 @@ function ImportRows({ id, onClose }: { id: string; onClose: () => void }) {
     </Modal>
   );
 }
-export function ExperimentsPage() {
+export function ExperimentsPage({
+  linkedExperimentId,
+  onLeaveLinkedExperiment,
+}: {
+  linkedExperimentId?: string;
+  onLeaveLinkedExperiment?: () => void;
+} = {}) {
   const { projectId, refresh } = useWorkspace();
   const list = useData<Experiment[]>(`/experiments?${qs({ projectId })}`, refresh);
   const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(linkedExperimentId || null);
   const [create, setCreate] = useState(false);
   const [compare, setCompare] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
   const [search, setSearch] = useState('');
+  useEffect(() => {
+    if (linkedExperimentId) setSelected(linkedExperimentId);
+  }, [linkedExperimentId]);
   useEffect(() => {
     if (list.data?.some((e) => ['running', 'queued'].includes(e.status))) {
       const timer = setInterval(list.reload, 1500);
       return () => clearInterval(timer);
     }
   }, [list.data, list.reload]);
-  if (selected) return <ExperimentView id={selected} onBack={() => setSelected(null)} />;
+  if (selected)
+    return (
+      <ExperimentView
+        id={selected}
+        onBack={() => {
+          setSelected(null);
+          onLeaveLinkedExperiment?.();
+        }}
+      />
+    );
   if (comparing && compare.length === 2)
     return (
       <CompareView
@@ -582,7 +636,7 @@ export function ExperimentsPage() {
               <GitCompareArrows size={16} />
               Compare{compare.length ? ` (${compare.length}/2)` : ''}
             </Button>
-            <Button variant="primary" onClick={() => setCreate(true)}>
+            <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
               <Plus size={16} />
               New experiment
             </Button>
@@ -601,7 +655,9 @@ export function ExperimentsPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="count-label">{filtered?.length || 0} experiments</span>
+          <span className="count-label">
+            {filtered?.length || 0} {filtered?.length === 1 ? 'experiment' : 'experiments'}
+          </span>
         </div>
         {list.loading && !list.data ? (
           <Loading />
@@ -673,7 +729,11 @@ export function ExperimentsPage() {
           <Empty
             title="Better agents start with a baseline"
             description="Run an evaluation against a dataset, then compare your next change."
-            action={<Button onClick={() => setCreate(true)}>Create an experiment</Button>}
+            action={
+              <Button permission="write" onClick={() => setCreate(true)}>
+                Create an experiment
+              </Button>
+            }
           />
         )}
       </div>
@@ -910,6 +970,7 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
           <>
             {running && (
               <Button
+                permission="write"
                 variant="danger"
                 disabled={action.busy}
                 onClick={() =>

@@ -1,16 +1,35 @@
 import { useEffect, useRef, type ReactNode, type FormEvent } from 'react';
 import { X, AlertCircle, ArrowUpRight, Inbox, LoaderCircle, ChevronRight } from 'lucide-react';
 import { stringify } from './lib';
+import { usePermissions } from './session';
 export function Button({
   children,
   variant = 'secondary',
   className = '',
+  permission,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  permission?: 'write' | 'admin' | 'account';
 }) {
+  const access = usePermissions();
+  const denied =
+    permission === 'account'
+      ? false
+      : permission === 'admin'
+        ? !access.canAdmin
+        : permission === 'write' || props.type === 'submit'
+          ? !access.canWrite
+          : false;
   return (
-    <button {...props} className={`button ${variant} ${className}`}>
+    <button
+      {...props}
+      disabled={props.disabled || denied}
+      title={
+        props.title || (denied ? 'Your workspace role does not permit this action.' : undefined)
+      }
+      className={`button ${variant} ${className}`}
+    >
       {children}
     </button>
   );
@@ -190,16 +209,34 @@ export function Field({
     </label>
   );
 }
-export function Form({ children, onSubmit }: { children: ReactNode; onSubmit: () => void }) {
+export function Form({
+  children,
+  onSubmit,
+  permission = 'write',
+}: {
+  children: ReactNode;
+  onSubmit: () => void;
+  permission?: 'write' | 'account';
+}) {
+  const access = usePermissions();
+  const canWrite = permission === 'account' || access.canWrite;
   return (
     <form
       className="form"
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        onSubmit();
+        if (canWrite) onSubmit();
       }}
     >
-      {children}
+      {!canWrite && (
+        <div className="permission-banner">
+          <AlertCircle size={14} />
+          Viewer access allows inspection. An editor or administrator can make changes.
+        </div>
+      )}
+      <fieldset className="form-fields" disabled={!canWrite}>
+        {children}
+      </fieldset>
     </form>
   );
 }

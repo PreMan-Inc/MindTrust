@@ -1,0 +1,34 @@
+{
+  "generatedAt": "2026-10-11T09:32:25.540Z",
+  "scope": "Local synthetic single-workspace benchmark, not a Braintrust comparison or production capacity guarantee",
+  "runtime": {
+    "node": "v24.21.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M5 Pro",
+    "logicalCpus": 15,
+    "memoryBytes": 25769803776
+  },
+  "configuration": {
+    "traces": 5000,
+    "batchSize": 50,
+    "concurrency": 8,
+    "authentication": "Bearer",
+    "transport": "HTTP loopback without TLS",
+    "storage": "SQLite WAL, synchronous FULL",
+    "sharedDatabaseAcrossProcesses": false
+  },
+  "result": {
+    "acceptedTraces": 5000,
+    "errorStatusTraces": 500,
+    "payloadBytes": 5618360,
+    "ingestWallMs": 288.5535,
+    "tracesPerSecond": 17327.809227751528,
+    "batchLatencyP50Ms": 20.63691700000004,
+    "batchLatencyP95Ms": 37.03687500000001,
+    "querySamples": 50,
+    "queryP50Ms": 0.5735000000000241,
+    "queryP95Ms": 0.93912499999999,
+    "lostTraces": 0
+  }
+}

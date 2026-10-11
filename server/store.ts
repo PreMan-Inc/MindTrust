@@ -10,6 +10,7 @@ import type {
   EvalCase,
   Experiment,
   Meta,
+  Overview,
   Project,
   Prompt,
   Scorer,
@@ -41,13 +42,26 @@ export interface ExperimentSnapshot {
 }
 export class Store {
   readonly db: DatabaseSync;
-  constructor(path: string) {
+  private closed = false;
+  constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+    const existingVersion = (
+      this.db.prepare('PRAGMA user_version').get() as { user_version: number }
+    ).user_version;
+    if (existingVersion > 3) {
+      this.db.close();
+      throw new Error(
+        'Database was created by a newer MindTrust version; refusing an unsafe downgrade',
+      );
+    }
+    this.db
+      .exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, project_id TEXT NOT NULL, parent_id TEXT, value TEXT NOT NULL CHECK(json_valid(value)), PRIMARY KEY(kind,id));
       CREATE INDEX IF NOT EXISTS records_project ON records(kind,project_id);
       CREATE INDEX IF NOT EXISTS records_parent ON records(kind,parent_id);
+      CREATE INDEX IF NOT EXISTS traces_time ON records(project_id,json_extract(value,'$.startTime') DESC,id) WHERE kind='trace';
+      CREATE INDEX IF NOT EXISTS traces_status_time ON records(project_id,json_extract(value,'$.status'),json_extract(value,'$.startTime') DESC,id) WHERE kind='trace';
       CREATE TABLE IF NOT EXISTS dataset_versions (dataset_id TEXT NOT NULL, version INTEGER NOT NULL, rows_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(dataset_id,version));
       CREATE TABLE IF NOT EXISTS prompt_versions (prompt_id TEXT NOT NULL, version INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(prompt_id,version));
       CREATE TABLE IF NOT EXISTS experiment_snapshots (experiment_id TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -134,12 +148,12 @@ export class Store {
     return (
       this.db
         .prepare(
-          'SELECT version, rows_json, created_at FROM dataset_versions WHERE dataset_id=? ORDER BY version DESC',
+          'SELECT version, json_array_length(rows_json) AS row_count, created_at FROM dataset_versions WHERE dataset_id=? ORDER BY version DESC',
         )
-        .all(id) as { version: number; rows_json: string; created_at: string }[]
+        .all(id) as { version: number; row_count: number; created_at: string }[]
     ).map((row) => ({
       version: row.version,
-      rowCount: JSON.parse(row.rows_json).length,
+      rowCount: row.row_count,
       createdAt: row.created_at,
     }));
   }
@@ -206,7 +220,7 @@ export class Store {
       spans: this.list<Span>('span', undefined, id).sort((a, b) =>
         a.startTime.localeCompare(b.startTime),
       ),
-      annotations: this.list<Annotation>('annotation', trace.projectId).filter(
+      annotations: this.list<Annotation>('annotation', trace.projectId, id).filter(
         (a) => a.targetType === 'trace' && a.targetId === id,
       ),
     };
@@ -243,7 +257,111 @@ export class Store {
         .all() as { id: string; name: string; prefix: string; created_at: string }[]
     ).map((r) => ({ id: r.id, name: r.name, prefix: r.prefix, createdAt: r.created_at }));
   }
+  queryTraces(
+    projectId: string,
+    options: { search?: string; status?: string; limit: number; offset: number },
+  ): { items: Trace[]; total: number } {
+    let where = "kind='trace' AND project_id=?";
+    const args: (string | number)[] = [projectId];
+    if (options.status) {
+      where += " AND json_extract(value,'$.status')=?";
+      args.push(options.status);
+    }
+    if (options.search) {
+      // Parameterized substring matching preserves JSON search semantics while
+      // avoiding materializing every trace in the application process.
+      where +=
+        " AND instr(lower(json_array(json_extract(value,'$.name'),json_extract(value,'$.input'),json_extract(value,'$.output'),json_extract(value,'$.metadata'),json_extract(value,'$.tags'))),lower(?))>0";
+      args.push(options.search);
+    }
+    const total = (
+      this.db.prepare(`SELECT count(*) AS n FROM records WHERE ${where}`).get(...args) as {
+        n: number;
+      }
+    ).n;
+    const rows = this.db
+      .prepare(
+        `SELECT value FROM records WHERE ${where} ORDER BY json_extract(value,'$.startTime') DESC,id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...args, options.limit, options.offset) as { value: string }[];
+    return { total, items: rows.map((r) => JSON.parse(r.value)) };
+  }
+  overview(projectId: string): Overview {
+    const totals = this.db
+      .prepare(
+        `SELECT count(*) AS traceCount,
+      coalesce(sum(json_extract(value,'$.status')='error'),0) AS errorCount,
+      coalesce(sum(json_extract(value,'$.inputTokens')+json_extract(value,'$.outputTokens')),0) AS totalTokens,
+      coalesce(sum(json_extract(value,'$.costUsd')),0) AS knownCostUsd,
+      coalesce(sum(json_extract(value,'$.costUsd') IS NULL),0) AS unknownCostCount
+      FROM records WHERE kind='trace' AND project_id=?`,
+      )
+      .get(projectId) as Pick<
+      Overview,
+      'traceCount' | 'errorCount' | 'totalTokens' | 'knownCostUsd' | 'unknownCostCount'
+    >;
+    const quantile = (p: number) =>
+      totals.traceCount
+        ? (
+            this.db
+              .prepare(
+                "SELECT json_extract(value,'$.latencyMs') AS n FROM records WHERE kind='trace' AND project_id=? ORDER BY n LIMIT 1 OFFSET ?",
+              )
+              .get(projectId, Math.max(0, Math.ceil(totals.traceCount * p) - 1)) as { n: number }
+          ).n
+        : 0;
+    const count = (kind: string) =>
+      (
+        this.db
+          .prepare('SELECT count(*) AS n FROM records WHERE kind=? AND project_id=?')
+          .get(kind, projectId) as { n: number }
+      ).n;
+    const series = this.db
+      .prepare(
+        `SELECT substr(json_extract(value,'$.startTime'),1,10) AS date,count(*) AS traces,
+      coalesce(sum(json_extract(value,'$.status')='error'),0) AS errors,coalesce(sum(json_extract(value,'$.costUsd')),0) AS costUsd,
+      coalesce(sum(json_extract(value,'$.inputTokens')+json_extract(value,'$.outputTokens')),0) AS tokens
+      FROM records WHERE kind='trace' AND project_id=? GROUP BY date ORDER BY date`,
+      )
+      .all(projectId) as Overview['series'];
+    const models = this.db
+      .prepare(
+        `SELECT coalesce(json_extract(value,'$.model'),'Unspecified') AS model,count(*) AS traces,
+      coalesce(sum(json_extract(value,'$.inputTokens')+json_extract(value,'$.outputTokens')),0) AS tokens,coalesce(sum(json_extract(value,'$.costUsd')),0) AS costUsd
+      FROM records WHERE kind='trace' AND project_id=? GROUP BY model ORDER BY traces DESC`,
+      )
+      .all(projectId) as Overview['models'];
+    const recentExperiments = (
+      this.db
+        .prepare(
+          "SELECT value FROM records WHERE kind='experiment' AND project_id=? ORDER BY json_extract(value,'$.createdAt') DESC LIMIT 5",
+        )
+        .all(projectId) as { value: string }[]
+    ).map((r) => JSON.parse(r.value));
+    return {
+      ...totals,
+      errorRate: totals.traceCount ? totals.errorCount / totals.traceCount : 0,
+      p50LatencyMs: quantile(0.5),
+      p95LatencyMs: quantile(0.95),
+      datasetCount: count('dataset'),
+      experimentCount: count('experiment'),
+      series,
+      models,
+      recentTraces: this.queryTraces(projectId, { limit: 8, offset: 0 }).items,
+      recentExperiments,
+    };
+  }
+  health() {
+    if (this.closed) return false;
+    try {
+      return (this.db.prepare('SELECT 1 AS ok').get() as { ok: number }).ok === 1;
+    } catch {
+      return false;
+    }
+  }
   close() {
+    if (this.closed) return;
+    this.closed = true;
     this.db.close();
   }
 }

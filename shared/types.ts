@@ -105,7 +105,7 @@ export interface Prompt {
   updatedAt: string;
 }
 export interface TaskConfig {
-  type: 'echo' | 'template' | 'openai';
+  type: 'echo' | 'template' | 'openai' | 'external';
   template?: string;
   system?: string;
   model?: string;

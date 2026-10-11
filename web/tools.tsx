@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { usePermissions } from './session';
 import {
   ArrowRight,
   Check,
@@ -72,7 +73,7 @@ export function PromptsPage() {
         title="Prompts"
         description="Version the instructions behind your application. Keep every iteration."
         actions={
-          <Button variant="primary" onClick={() => setCreate(true)}>
+          <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={15} />
             Create prompt
           </Button>
@@ -105,7 +106,11 @@ export function PromptsPage() {
         <Empty
           title="One place for every prompt"
           description="Create a prompt and preserve each revision as your application evolves."
-          action={<Button onClick={() => setCreate(true)}>Create your first prompt</Button>}
+          action={
+            <Button permission="write" onClick={() => setCreate(true)}>
+              Create your first prompt
+            </Button>
+          }
         />
       )}{' '}
       {(create || selected) && (
@@ -440,7 +445,7 @@ export function ScorersPage() {
         title="Scorers"
         description="Repeatable checks for the behaviors that matter to your product."
         actions={
-          <Button variant="primary" onClick={() => setCreate(true)}>
+          <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={15} />
             Create scorer
           </Button>
@@ -476,7 +481,11 @@ export function ScorersPage() {
         <Empty
           title="Make quality measurable"
           description="Add a deterministic scorer to evaluate your outputs."
-          action={<Button onClick={() => setCreate(true)}>Create scorer</Button>}
+          action={
+            <Button permission="write" onClick={() => setCreate(true)}>
+              Create scorer
+            </Button>
+          }
         />
       )}{' '}
       {create && <CreateScorer onClose={() => setCreate(false)} />}{' '}
@@ -691,220 +700,4 @@ export function ReviewPage() {
 }
 function BookReviewIcon() {
   return <CheckCheck size={15} />;
-}
-export function SettingsPage() {
-  const { projectId, refresh, refreshAll, notify } = useWorkspace();
-  const info = useData<ServerInfo>('/info', refresh);
-  const keys = useData<ApiKey[]>('/keys', refresh);
-  const [token, setToken] = useState(sessionStorage.getItem(TOKEN_KEY) || '');
-  const [name, setName] = useState('');
-  const [newKey, setNewKey] = useState('');
-  const [deleting, setDeleting] = useState<ApiKey | null>(null);
-  const action = useAction();
-  const snippet = `import { MindTrust } from "./sdk/index.mjs";\n\nconst client = new MindTrust({\n  baseUrl: "http://127.0.0.1:4310",\n  projectId: ${JSON.stringify(projectId)},\n  apiKey: process.env.MINDTRUST_API_KEY,\n});\n\nawait client.trace("support-agent", {\n  input: { message: "Hello" },\n  kind: "agent",\n}, async (span) => {\n  return "Agent response";\n});\n\nawait client.flush();`;
-  return (
-    <>
-      <PageHeader
-        eyebrow="MAKE THIS WORKSPACE YOURS"
-        title="Settings & API keys"
-        description="Connect your application, manage access, and configure execution."
-      />
-      <div className="settings-grid">
-        <div>
-          <Section
-            title="Workspace access"
-            detail="Your session credential stays in this browser tab."
-          >
-            <Form
-              onSubmit={() =>
-                action.run(async () => {
-                  if (token) sessionStorage.setItem(TOKEN_KEY, token);
-                  else sessionStorage.removeItem(TOKEN_KEY);
-                  await api('/projects');
-                  refreshAll();
-                  notify(
-                    token ? 'Session credential saved and verified' : 'Session credential cleared',
-                  );
-                })
-              }
-            >
-              <Field
-                label="Admin token or API key"
-                hint="Required when MINDTRUST_ADMIN_TOKEN is configured on the server. Do not enter model-provider keys here."
-              >
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="Workspace bearer credential"
-                />
-              </Field>
-              <FormActions busy={action.busy} label="Save session credential" />
-            </Form>
-          </Section>
-          <Section
-            title="API keys"
-            detail="Use revocable keys for your applications. New keys are shown once."
-          >
-            <ErrorBox message={keys.error} />
-            {newKey && (
-              <div className="new-key-box">
-                <strong>Save this key now.</strong>
-                <p>It won’t be shown again after you leave this page.</p>
-                <div className="copy-row">
-                  <code>{newKey}</code>
-                  <Button
-                    aria-label="Copy new API key"
-                    onClick={() =>
-                      action.run(async () => {
-                        await copy(newKey);
-                        notify('API key copied');
-                      })
-                    }
-                  >
-                    <Copy size={14} />
-                  </Button>
-                </div>
-                <Button variant="ghost" onClick={() => setNewKey('')}>
-                  I’ve saved this key
-                </Button>
-              </div>
-            )}
-            <Form
-              onSubmit={() =>
-                action.run(async () => {
-                  const key = await post<ApiKey & { key: string }>('/keys', { name });
-                  setNewKey(key.key);
-                  setName('');
-                  keys.reload();
-                  notify('API key created');
-                })
-              }
-            >
-              <div className="inline-form">
-                <Field label="Key name">
-                  <input
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Development app"
-                  />
-                </Field>
-                <Button type="submit" disabled={!name || action.busy}>
-                  <Plus size={14} />
-                  Create key
-                </Button>
-              </div>
-            </Form>
-            <div className="api-key-list">
-              {keys.data?.map((k) => (
-                <div className="api-key" key={k.id}>
-                  <KeyRound size={16} />
-                  <div>
-                    <strong>{k.name}</strong>
-                    <span>
-                      {k.prefix}… · {date(k.createdAt)}
-                    </span>
-                  </div>
-                  <button
-                    className="icon-button danger-icon"
-                    aria-label={`Revoke ${k.name}`}
-                    onClick={() => setDeleting(k)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Section>
-          <ErrorBox message={action.error} />
-        </div>
-        <div>
-          <Section title="Runtime" detail="Configuration is read from the server environment.">
-            <div className="runtime-details">
-              <div>
-                <span>Version</span>
-                <Badge>{info.data?.version || '—'}</Badge>
-              </div>
-              <div>
-                <span>Authentication</span>
-                <Badge tone={info.data?.authEnabled ? 'green' : 'amber'}>
-                  {info.data?.authEnabled ? 'Enabled' : 'Local development'}
-                </Badge>
-              </div>
-              <div>
-                <span>Model provider</span>
-                <Badge tone={info.data?.providerConfigured ? 'green' : 'neutral'}>
-                  {info.data?.providerConfigured ? 'Configured' : 'Not configured'}
-                </Badge>
-              </div>
-              <div>
-                <span>Storage</span>
-                <strong>{info.data?.storage || 'SQLite'}</strong>
-              </div>
-            </div>
-            <div className="settings-tip">
-              <ShieldCheck size={17} />
-              <p>
-                Provider credentials stay on the server. Set <code>OPENAI_API_KEY</code> and
-                optionally <code>OPENAI_BASE_URL</code> to enable model execution.
-              </p>
-            </div>
-          </Section>
-          <Section
-            title="Connect your application"
-            detail="Use the bundled Node.js SDK from this repository."
-            actions={
-              <button
-                className="icon-button"
-                aria-label="Copy SDK example"
-                onClick={() =>
-                  action.run(async () => {
-                    await copy(snippet);
-                    notify('SDK example copied');
-                  })
-                }
-              >
-                <Copy size={16} />
-              </button>
-            }
-          >
-            <pre className="sdk-snippet">{snippet}</pre>
-            <div className="sdk-footer">
-              <External href="https://github.com/PreMan-Inc/MindTrust">
-                Read the setup guide
-              </External>
-            </div>
-          </Section>
-        </div>
-      </div>
-      {deleting && (
-        <Modal
-          title={`Revoke ${deleting.name}?`}
-          description="Applications using this key will lose access immediately."
-          onClose={() => setDeleting(null)}
-        >
-          <ErrorBox message={action.error} />
-          <div className="form-actions">
-            <Button onClick={() => setDeleting(null)}>Keep key</Button>
-            <Button
-              variant="danger"
-              disabled={action.busy}
-              onClick={() =>
-                action.run(async () => {
-                  await api(`/keys/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' });
-                  keys.reload();
-                  setDeleting(null);
-                  notify('API key revoked');
-                })
-              }
-            >
-              Revoke API key
-            </Button>
-          </div>
-        </Modal>
-      )}
-    </>
-  );
 }

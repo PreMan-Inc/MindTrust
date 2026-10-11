@@ -1,11 +1,11 @@
 import express, { type ErrorRequestHandler, type Request } from 'express';
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import type {
   Annotation,
-  ApiKey,
   Comparison,
   ComparisonRow,
   Dataset,
@@ -29,6 +29,10 @@ import {
 } from './evaluation.ts';
 import { seedDemo } from './seed-data.ts';
 import { HttpError, Store } from './store.ts';
+import { AccessController } from './auth.ts';
+import { mountOidc, type OidcOptions } from './oidc.ts';
+import { installOperations } from './operations.ts';
+import { mountBraintrustCompatibility } from './braintrust-compat.ts';
 import { ingestOtlp, writeTrace } from './traces.ts';
 import {
   idSchema,
@@ -49,16 +53,15 @@ export interface AppOptions {
   adminToken?: string;
   providerBaseUrl?: string;
   providerApiKey?: string;
+  production?: boolean;
+  oidc?: OidcOptions;
+  trustedProxies?: string[];
+  allowedOrigins?: string[];
+  sessionTtlMs?: number;
+  loginMaxAttempts?: number;
+  loginWindowMs?: number;
 }
 const now = () => new Date().toISOString();
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function equalSecret(actual: string, expected: string) {
-  return timingSafeEqual(Buffer.from(hash(actual)), Buffer.from(hash(expected)));
-}
-function keyOf(req: Request) {
-  const header = req.get('authorization');
-  return header?.startsWith('Bearer ') ? header.slice(7) : '';
-}
 function parameter(req: Request, name: string) {
   const value = req.params[name];
   if (typeof value !== 'string') throw new HttpError(400, 'Invalid path parameter');
@@ -96,16 +99,39 @@ function requiredProjectResource<T extends { projectId: string }>(
     throw new HttpError(400, `${kind} belongs to another project`);
   return resource;
 }
-function percentile(values: number[], p: number) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
-}
-
 export function createApp(options: AppOptions = {}) {
   const dbPath = options.dbPath ?? resolve('data/mindtrust.sqlite');
   const store = new Store(dbPath);
   const adminToken = options.adminToken ?? '';
+  const production = options.production ?? process.env.NODE_ENV === 'production';
+  const allowedOrigins =
+    options.allowedOrigins ??
+    (process.env.MINDTRUST_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (
+    production &&
+    (!allowedOrigins.length ||
+      allowedOrigins.some((origin) => {
+        try {
+          const url = new URL(origin);
+          return url.protocol !== 'https:' || url.origin !== origin || origin.includes('*');
+        } catch {
+          return true;
+        }
+      }))
+  ) {
+    store.close();
+    throw new Error('Production requires exact HTTPS MINDTRUST_ALLOWED_ORIGINS');
+  }
+  let access: AccessController;
+  try {
+    access = new AccessController(store, { ...options, production });
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   const provider = {
     baseUrl: options.providerBaseUrl ?? 'https://api.openai.com/v1',
     apiKey: options.providerApiKey,
@@ -127,10 +153,19 @@ export function createApp(options: AppOptions = {}) {
       'Provider base URL must be an HTTP(S) URL without credentials, query, or fragment',
     );
   }
-  if (options.seed !== false) seedDemo(store);
+  if (options.seed ?? !production) seedDemo(store);
   const queue = new EvaluationQueue(store, provider);
   const app = express();
   app.disable('x-powered-by');
+  app.set('case sensitive routing', true);
+  app.set('strict routing', true);
+  if (options.trustedProxies?.length) {
+    if (options.trustedProxies.length > 16 || options.trustedProxies.some((ip) => !isIP(ip))) {
+      store.close();
+      throw new Error('trustedProxies must contain explicit proxy IP addresses only');
+    }
+    app.set('trust proxy', options.trustedProxies);
+  }
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
@@ -139,56 +174,165 @@ export function createApp(options: AppOptions = {}) {
       res.setHeader('Cache-Control', 'no-store');
     // Reject DNS-rebinding requests before serving any unauthenticated local data.
     // Authenticated deployments still require their token and browser origin allowlist.
-    if (!adminToken && !['localhost', '127.0.0.1', '[::1]', '::1'].includes(req.hostname))
+    if (!access.enabled && !['localhost', '127.0.0.1', '[::1]', '::1'].includes(req.hostname))
       return res.status(403).json({ error: 'Host is not allowed in local development mode' });
     const origin = req.get('origin');
     if (origin) {
       const port = req.socket.localPort ?? 4310;
-      const origins = new Set([
-        `http://127.0.0.1:${port}`,
-        `http://localhost:${port}`,
-        `http://[::1]:${port}`,
-        'http://127.0.0.1:5173',
-        'http://localhost:5173',
-        'http://127.0.0.1:5190',
-        'http://localhost:5190',
-        ...(process.env.MINDTRUST_ALLOWED_ORIGINS ?? '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
-      ]);
+      const origins = new Set(
+        production
+          ? allowedOrigins
+          : [
+              `http://127.0.0.1:${port}`,
+              `http://localhost:${port}`,
+              `http://[::1]:${port}`,
+              'http://127.0.0.1:5173',
+              'http://localhost:5173',
+              'http://127.0.0.1:5190',
+              'http://localhost:5190',
+              ...allowedOrigins,
+            ],
+      );
       if (!origins.has(origin))
         return res.status(403).json({ error: 'Browser origin is not allowed' });
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Authorization, Content-Type, X-Mindtrust-Project-Id',
+        'Authorization, Content-Type, X-Mindtrust-Project-Id, X-CSRF-Token',
       );
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
+  const operations = installOperations(app, store, queue, access, {
+    production,
+    requestLogging: production,
+  });
+  app.use(access.auditMiddleware);
   app.use(express.json({ limit: '5mb', strict: true }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
-  app.use(['/api', '/v1'], (req, res, next) => {
-    if (!adminToken) return next();
-    const token = keyOf(req);
-    if (token && equalSecret(token, adminToken)) return next();
-    if (token && store.db.prepare('SELECT id FROM api_keys WHERE hash=?').get(hash(token)))
-      return next();
-    res.status(401).json({ error: 'A valid Bearer token is required' });
+  access.mountPublicRoutes(app);
+  if (options.oidc) {
+    try {
+      mountOidc(app, store, access, options.oidc, allowedOrigins);
+    } catch (error) {
+      store.close();
+      throw error;
+    }
+  }
+  app.use(['/api', '/v1', '/object', '/logs3', '/btql'], access.middleware);
+  access.mountRoutes(app);
+
+  // Native ownership policy is centralized and runs before any resource lookup response
+  // or mutation. Compatibility handlers authorize their own wire-protocol resources.
+  app.use((req, _res, next) => {
+    try {
+      const path = req.path,
+        mode = ['GET', 'HEAD'].includes(req.method) ? 'read' : 'write';
+      if (path === '/v1/traces') {
+        access.principal(req);
+        const header = req.get('x-mindtrust-project-id');
+        if (header) access.requireProject(req, parse(idSchema, header), 'write');
+        const resources = req.body?.resourceSpans;
+        if (Array.isArray(resources))
+          for (const resource of resources) {
+            const attribute = Array.isArray(resource?.resource?.attributes)
+              ? resource.resource.attributes.find(
+                  (a: { key?: unknown }) => a?.key === 'mindtrust.project_id',
+                )
+              : undefined;
+            const projectId = header ?? attribute?.value?.stringValue;
+            if (typeof projectId !== 'string')
+              throw new HttpError(400, 'OTLP requires a project ID');
+            access.requireProject(req, projectId, 'write');
+          }
+        return next();
+      }
+      if (!path.startsWith('/api/')) return next();
+      if (path === '/api/projects') {
+        if (mode === 'write') access.requireCreateProject(req);
+        return next();
+      }
+      if (path === '/api/info') {
+        access.principal(req);
+        return next();
+      }
+      if (path === '/api/compare') {
+        access.requireResource(req, 'experiment', parse(idSchema, req.query.baseline), 'read');
+        access.requireResource(req, 'experiment', parse(idSchema, req.query.candidate), 'read');
+        return next();
+      }
+      const collections = [
+        '/api/overview',
+        '/api/traces',
+        '/api/traces/export',
+        '/api/datasets',
+        '/api/annotations',
+        '/api/scorers',
+        '/api/experiments',
+        '/api/experiments/import',
+        '/api/prompts',
+        '/api/playground',
+      ];
+      if (collections.includes(path)) {
+        const projectId = parse(
+          idSchema,
+          mode === 'read' ? req.query.projectId : req.body?.projectId,
+        );
+        access.requireProject(req, projectId, mode);
+        if (mode === 'write') {
+          if (typeof req.body?.datasetId === 'string')
+            access.requireResource(req, 'dataset', req.body.datasetId, 'read');
+          if (Array.isArray(req.body?.scorerIds))
+            for (const scorerId of req.body.scorerIds)
+              access.requireResource(req, 'scorer', parse(idSchema, scorerId), 'read');
+          if (path === '/api/annotations' && ['trace', 'case'].includes(req.body?.targetType))
+            access.requireResource(
+              req,
+              req.body.targetType,
+              parse(idSchema, req.body.targetId),
+              'write',
+            );
+          if (path === '/api/traces' && Array.isArray(req.body?.traces))
+            for (const trace of req.body.traces)
+              if (typeof trace?.id === 'string' && store.get('trace', trace.id))
+                access.requireResource(req, 'trace', trace.id, 'write');
+          if (path === '/api/experiments/import' && Array.isArray(req.body?.cases))
+            for (const item of req.body.cases)
+              if (typeof item?.traceId === 'string')
+                access.requireResource(req, 'trace', item.traceId, 'read');
+        }
+        return next();
+      }
+      const resource = /^\/api\/(traces|datasets|experiments|prompts)\/([^/]+)(?:\/|$)/.exec(path);
+      if (resource) {
+        let id: string;
+        try {
+          id = decodeURIComponent(resource[2]);
+        } catch {
+          throw new HttpError(400, 'Invalid resource ID');
+        }
+        const kinds = {
+          traces: 'trace',
+          datasets: 'dataset',
+          experiments: 'experiment',
+          prompts: 'prompt',
+        } as const;
+        access.requireResource(req, kinds[resource[1] as keyof typeof kinds], id, mode);
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
   });
-  const admin = (req: Request) => {
-    if (adminToken && !equalSecret(keyOf(req), adminToken))
-      throw new HttpError(403, 'The server admin token is required to manage API keys');
-  };
 
   app.get('/api/info', (_req, res) => {
     const info: ServerInfo = {
-      version: '0.1.0',
-      authEnabled: !!adminToken,
+      version: '0.2.0',
+      authEnabled: access.enabled,
       providerConfigured: !!provider.apiKey,
       providerBaseUrl: baseUrl.origin + baseUrl.pathname,
       storage: 'SQLite',
@@ -196,7 +340,7 @@ export function createApp(options: AppOptions = {}) {
     };
     res.json(info);
   });
-  app.get('/api/projects', (_req, res) => res.json(store.list<Project>('project')));
+  app.get('/api/projects', (req, res) => res.json(access.listProjects(req)));
   app.post('/api/projects', (req, res) => {
     const body = parse(
       z.object({ name: nameSchema, description: z.string().max(10000).optional() }),
@@ -211,54 +355,7 @@ export function createApp(options: AppOptions = {}) {
     store.put('project', p, p.id);
     res.status(201).json(p);
   });
-  app.get('/api/overview', (req, res) => {
-    const projectId = projectQuery(req, store),
-      traces = store.list<Trace>('trace', projectId),
-      experiments = store.list<Experiment>('experiment', projectId),
-      errors = traces.filter((t) => t.status === 'error');
-    const days = new Map<string, Overview['series'][number]>(),
-      models = new Map<string, Overview['models'][number]>();
-    for (const trace of traces) {
-      const date = trace.startTime.slice(0, 10);
-      const day = days.get(date) ?? { date, traces: 0, errors: 0, costUsd: 0, tokens: 0 };
-      day.traces++;
-      day.errors += trace.status === 'error' ? 1 : 0;
-      day.costUsd += trace.costUsd ?? 0;
-      day.tokens += trace.inputTokens + trace.outputTokens;
-      days.set(date, day);
-      const model = trace.model ?? 'Unspecified';
-      const m = models.get(model) ?? { model, traces: 0, tokens: 0, costUsd: 0 };
-      m.traces++;
-      m.tokens += trace.inputTokens + trace.outputTokens;
-      m.costUsd += trace.costUsd ?? 0;
-      models.set(model, m);
-    }
-    const overview: Overview = {
-      traceCount: traces.length,
-      errorCount: errors.length,
-      errorRate: traces.length ? errors.length / traces.length : 0,
-      p50LatencyMs: percentile(
-        traces.map((t) => t.latencyMs),
-        0.5,
-      ),
-      p95LatencyMs: percentile(
-        traces.map((t) => t.latencyMs),
-        0.95,
-      ),
-      totalTokens: traces.reduce((n, t) => n + t.inputTokens + t.outputTokens, 0),
-      knownCostUsd: traces.reduce((n, t) => n + (t.costUsd ?? 0), 0),
-      unknownCostCount: traces.filter((t) => t.costUsd === null).length,
-      datasetCount: store.list<Dataset>('dataset', projectId).length,
-      experimentCount: experiments.length,
-      series: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
-      models: [...models.values()].sort((a, b) => b.traces - a.traces),
-      recentTraces: traces.sort((a, b) => b.startTime.localeCompare(a.startTime)).slice(0, 8),
-      recentExperiments: experiments
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 5),
-    };
-    res.json(overview);
-  });
+  app.get('/api/overview', (req, res) => res.json(store.overview(projectQuery(req, store))));
   app.get('/api/traces', (req, res) => {
     const projectId = projectQuery(req, store),
       limit = positiveQuery(req.query.limit, 50, 200),
@@ -268,18 +365,14 @@ export function createApp(options: AppOptions = {}) {
     if (req.query.search !== undefined && typeof req.query.search !== 'string')
       throw new HttpError(400, 'Invalid search query');
     const search = String(req.query.search ?? '').toLocaleLowerCase();
-    const traces = store
-      .list<Trace>('trace', projectId)
-      .filter(
-        (t) =>
-          (!req.query.status || t.status === req.query.status) &&
-          (!search ||
-            JSON.stringify([t.name, t.input, t.output, t.metadata, t.tags])
-              .toLocaleLowerCase()
-              .includes(search)),
-      )
-      .sort((a, b) => b.startTime.localeCompare(a.startTime));
-    res.json({ items: traces.slice(offset, offset + limit), total: traces.length });
+    res.json(
+      store.queryTraces(projectId, {
+        search,
+        status: req.query.status as string | undefined,
+        limit,
+        offset,
+      }),
+    );
   });
   app.post('/api/traces', (req, res) => {
     const body = parse(
@@ -500,6 +593,7 @@ export function createApp(options: AppOptions = {}) {
       finishedAt: null,
       error: null,
     };
+    queue.assertCapacity();
     store.transaction(() => store.saveExperiment(experiment, { rows, scorers }));
     queue.enqueue(experiment.id);
     res.status(202).json(experiment);
@@ -575,7 +669,7 @@ export function createApp(options: AppOptions = {}) {
       datasetVersion: body.datasetVersion,
       status: 'completed',
       executionSource: 'sdk-import',
-      task: { type: 'echo' },
+      task: { type: 'external' },
       scorerIds,
       trials: Math.max(...cases.map((c) => c.trial)),
       concurrency: 1,
@@ -760,33 +854,15 @@ export function createApp(options: AppOptions = {}) {
     res.json({ ...result, traceId });
   });
 
-  app.get('/api/keys', (req, res) => {
-    admin(req);
-    res.json(store.keys());
+  mountBraintrustCompatibility(app, store, access);
+  // Never serve the SPA for misspelled/reserved API paths. In particular,
+  // case variants must not fall through after strict route authorization.
+  app.use((req, res, next) => {
+    if (/^\/(?:api|v1|object|logs3|btql)(?:\/|$)/i.test(req.path)) {
+      return res.status(404).json({ error: 'API route not found' });
+    }
+    next();
   });
-  app.post('/api/keys', (req, res) => {
-    admin(req);
-    const body = parse(z.object({ name: nameSchema }), req.body),
-      key = `mt_${randomBytes(32).toString('hex')}`;
-    const value: ApiKey = {
-      id: randomUUID(),
-      name: body.name,
-      prefix: key.slice(0, 11),
-      createdAt: now(),
-    };
-    store.db
-      .prepare('INSERT INTO api_keys(id,name,prefix,hash,created_at) VALUES(?,?,?,?,?)')
-      .run(value.id, value.name, value.prefix, hash(key), value.createdAt);
-    res.status(201).json({ ...value, key });
-  });
-  app.delete('/api/keys/:id', (req, res) => {
-    admin(req);
-    const result = store.db.prepare('DELETE FROM api_keys WHERE id=?').run(parameter(req, 'id'));
-    if (!result.changes) throw new HttpError(404, 'API key not found');
-    res.json({ ok: true });
-  });
-
-  app.use(['/api', '/v1'], (_req, res) => res.status(404).json({ error: 'API route not found' }));
   const dist = resolve('dist');
   if (existsSync(resolve(dist, 'index.html'))) {
     app.use(express.static(dist));
@@ -818,9 +894,12 @@ export function createApp(options: AppOptions = {}) {
   return {
     app,
     store,
+    access,
+    operations,
     close: async () => {
       if (closed) return;
       closed = true;
+      operations.drain();
       await queue.close();
       store.close();
     },

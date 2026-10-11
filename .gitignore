@@ -11,3 +11,6 @@ coverage/
 *.sqlite-shm
 test-results/
 playwright-report/
+__pycache__/
+*.pyc
+.venv/

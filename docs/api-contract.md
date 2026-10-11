@@ -1,4 +1,4 @@
-# MindTrust v0.1 API contract
+# MindTrust v0.2 API contract
 
 Shared implementation contract. JSON field shapes live in `shared/types.ts`. All routes below have the `/api` prefix unless stated. List endpoints return arrays except traces, which return `{ items: Trace[], total: number }`. Errors return `{ error: string }` with appropriate 4xx/5xx status. Data persists in SQLite. No provider calls occur in the seeded demo.
 
@@ -21,7 +21,16 @@ Dataset rows carry `hasExpected`: an omitted expectation is different from an ex
 - `POST /experiments/import` `{ projectId, name, datasetId, datasetVersion, cases: [{ rowId, trial?, input, expected, output, scores, latencyMs?, costUsd?, inputTokens?, outputTokens?, traceId?, error? }], description? }` imports independently executed SDK evals → Experiment. Validate dataset row membership and unique row/trial pairs.
 - `GET /prompts?projectId=...` → Prompt[]; `POST /prompts` `{ projectId, name, description?, system?, template, model? }` → Prompt; `GET /prompts/:id` → `{ prompt, versions: Prompt[] }`; `POST /prompts/:id/versions` `{ system, template, model, description? }` → Prompt.
 - `POST /playground` `{ projectId, task: TaskConfig, input: Json }` → `{ output, latencyMs, costUsd, inputTokens, outputTokens, traceId }`. Template mode is deterministic rendering, clearly labeled. Provider requires configured server API key and real network call.
-- `GET /keys` → ApiKey[]; `POST /keys` `{ name }` → ApiKey & `{ key: string }` (plaintext returned once); `DELETE /keys/:id` → `{ ok: true }`. Root admin token required for key management when auth enabled. Store key hashes only.
+- `GET /keys` → scoped key metadata; `POST /keys` `{ name, role, projectIds, expiresAt? }` → metadata & `{ key: string }` (plaintext returned once); `DELETE /keys/:id` revokes it. Workspace administrator required. Roles are `viewer`, `editor`, `admin`; `projectIds` is an explicit array or `null` for all projects. Production requires explicit role and scope. Expiry defaults to 90 days and is capped at 366 days. Store key hashes only.
+
+## Team sessions and operations (0.2)
+
+- `GET /auth/status` reports configured authentication and optional SSO availability. `POST /auth/login` accepts `{email,password}` and returns a principal/CSRF token plus an HttpOnly session cookie. `GET /auth/session` refreshes the current principal. `POST /auth/logout` revokes the session. Session mutations require `X-CSRF-Token`.
+- `POST /auth/change-password` accepts `{currentPassword,newPassword}` from a signed-in user, revokes sessions, and requires a new sign-in.
+- `GET/POST /users` and `PATCH /users/:id` manage named accounts, role, project scopes, disablement, and optional OIDC opt-in. `POST /users/:id/revoke-sessions` invalidates sessions. Workspace administrator required. Passwords require 12–256 characters and are stored as salted scrypt hashes.
+- `GET /audit?limit=100` provides redacted audit events to administrators. `GET /operations` provides queue/readiness/memory state.
+- Root paths `/livez` and `/readyz` are health probes; `/metrics` requires administrator authentication. The supplied public reverse proxy blocks operator endpoints.
+- OIDC login/callback paths and the tested Braintrust wire endpoints are documented in [production operations](production-operations.md) and [compatibility](braintrust-compatibility.md).
 - `POST /v1/traces` (no /api prefix): OTLP/HTTP JSON (`resourceSpans`), headers `x-mindtrust-project-id` or resource attribute `mindtrust.project_id`; preserve trace/span IDs, parents, status, nanosecond timestamps. JSON only, return standard `{ partialSuccess?: { rejectedSpans, errorMessage } }`. No protobuf claim.
 
 Server implementation exports `createApp({ dbPath?, seed?, adminToken?, providerBaseUrl?, providerApiKey? })` returning `{ app, close, store }` for integration tests. Startup only in server/index.ts. Seed idempotent synthetic project `demo-project`, dataset `demo-dataset`, traces and two contrasting experiments, prompts/scorers, clearly marked synthetic metadata. No live customer or investor records.

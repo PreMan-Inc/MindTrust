@@ -1,15 +1,16 @@
 # Architecture and operating boundaries
 
-MindTrust v0.1 is a single-instance application for one trusted workspace. It implements a connected observability/evaluation workflow, not a distributed replacement for every Braintrust service.
+MindTrust v0.2 is a release candidate for an isolated customer workspace with named users and project-scoped permissions. A separate service process, database, identity-provider configuration, and secrets form each customer's boundary. It implements a connected observability/evaluation workflow; it is not a distributed replacement for every Braintrust service.
 
 ## Components
 
 - **React dashboard:** project selection, trace inspection, datasets, experiments, comparisons, prompts, playground, scorers, reviews, and instance access settings. UI operations use the same HTTP API as clients.
-- **Express API:** validates requests and persists records. An optional instance administrator token and hashed API keys protect data access. Provider credentials never go to the browser.
+- **Express API:** validates requests and enforces viewer/editor/admin access on every resource path. Password/OIDC sessions use HttpOnly cookies and CSRF tokens; application keys carry project scopes and expiry. Provider credentials never go to the browser.
 - **SQLite storage:** WAL mode, parameterized SQL, project-scoped records, immutable dataset/prompt revisions, experiment manifests, and API key hashes. A database file is the persistence boundary.
 - **Evaluation workers:** execute deterministic echo/template tasks or a configured OpenAI-compatible text completion provider with bounded concurrency. Dataset rows and scorer definitions are captured before execution.
 - **Node.js SDK:** nested async-context tracing, buffered uploads, local task/custom scorer execution, and result import. Client code executes in the client's process, not inside the web server.
 - **OTLP receiver:** accepts the HTTP JSON trace signal on `/v1/traces`. It is a limited mapping into the MindTrust schema, not a universal OpenTelemetry collector.
+- **Braintrust adapter:** validates a bounded upstream protocol, stores raw event fields, and materializes native traces/datasets/experiments. Pinned official SDK contract tests exercise the implemented surface; see [compatibility](braintrust-compatibility.md).
 
 ## Data flow
 
@@ -31,18 +32,18 @@ Root trace metrics are authoritative when supplied. Instrumentation should repor
 
 ## Access and deployment
 
-Without an administrator token, the server is for localhost development. Network binding beyond loopback requires `MINDTRUST_ADMIN_TOKEN`. All data routes require a bearer token when authentication is configured; key management requires the administrator token. API keys have instance-wide data access, **not project-specific RBAC**.
+Unauthenticated access is limited to local development. Production requires a strong bootstrap/recovery token and exact HTTPS origins. Personal accounts use salted scrypt password hashes or opt-in OIDC identities. Viewer/editor/admin roles and project allowlists apply to sessions and API keys; key and user administration require workspace-admin access. Revocation and permission changes are consulted on subsequent requests.
 
-Browser origins are checked, and cross-origin access is not generally enabled. The UI can keep a token in session storage for the current tab/session. Use a TLS reverse proxy and network restrictions for remote use. There is no account system, SSO, SCIM, tenant isolation, per-user audit trail, or compliance certification.
+Browser origins are checked. Normal human sessions use Secure/HttpOnly/SameSite cookies in production, with CSRF validation on mutations. The bootstrap-token fallback uses session storage for that tab. OIDC validates signed tokens, issuer/audience, state, nonce, PKCE, browser binding, and preprovisioned identity linkage. Audit records omit content and credentials. Customers are isolated by deployments; a shared multi-tenant control plane, SAML/SCIM, and compliance certification are not implemented.
 
 ## Persistence and recovery
 
 Dataset updates and snapshots are transactional. Evaluation manifests and finished case results are persisted, but provider side effects cannot be atomically committed with SQLite. A process interruption can require retrying in-flight work; use idempotent tasks and do not evaluate against destructive production operations. Cancellation cannot undo external effects that have already occurred.
 
-Run one API process per database file. Synchronous SQLite and whole-document datasets are deliberately simple; they are not a demonstrated high-throughput architecture. Back up the database while the service is stopped, or use SQLite's online backup API. Copying only the main file while WAL writes are active is not a valid backup procedure. Retention, automatic backup, and schema migration tooling are future work.
+Run one API process per database file. The entry point acquires an OS-backed SQLite lock separate from application writes; it releases after a crash. SQL pagination and aggregation avoid loading every trace into Node. Evaluation scheduling bounds active jobs and task concurrency. SQLite and whole-document dataset snapshots still impose scale limits. The backup CLI uses SQLite's online backup API, verifies integrity/checksums, and only restores to a new path. Unknown future database versions are refused. Offsite scheduling, retention, replication, and high availability remain operator or future engineering work; see [production operations](production-operations.md).
 
 ## Deliberate omissions
 
-This version does not implement Brainstore/BTQL, the Braintrust wire protocol, remote code sandboxes, automatic online scoring, a model-routing gateway, streaming completions, cache/fallback policies, distributed ingestion, alert delivery, review assignments, attachment storage, Loop, Topics, Patterns, or enterprise administration. These gaps and their replacement requirements are documented in the research report.
+This version does not implement Brainstore/general BTQL, the complete Braintrust protocol, remote code sandboxes, automatic online scoring, a model-routing gateway, streaming completions, cache/fallback policies, distributed ingestion, alert delivery, review assignments, attachment storage, Loop, Topics, or Patterns. These gaps and their replacement requirements are documented in the research report. The implemented team controls are not a claim of enterprise compliance.
 
 The SDK and the app are independently authored. Publicly observable concepts informed their design; no Braintrust server implementation or private API was accessed.

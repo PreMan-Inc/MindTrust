@@ -1,0 +1,2 @@
+# Public upstream SDK used unmodified. Python >=3.10; CI uses Python 3.12.
+braintrust==0.45.0

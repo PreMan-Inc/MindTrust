@@ -1,0 +1,67 @@
+# One isolated customer workspace per stack/VM. Never share its volume or secret.
+services:
+  proxy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set this customer's DNS hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the TLS certificate contact email}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy-config:/config
+    networks:
+      workspace:
+        ipv4_address: ${PROXY_IP:-172.30.10.2}
+    depends_on:
+      mindtrust:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+  mindtrust:
+    build:
+      context: ..
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 50s
+    environment:
+      MINDTRUST_MODE: production
+      MINDTRUST_ADMIN_TOKEN: ${MINDTRUST_ADMIN_TOKEN:?Set a unique 32+ character bootstrap secret}
+      MINDTRUST_ALLOWED_ORIGINS: https://${DOMAIN}
+      MINDTRUST_PUBLIC_URL: https://${DOMAIN}
+      MINDTRUST_TRUSTED_PROXIES: ${PROXY_IP:-172.30.10.2}
+      MINDTRUST_SEED: 'false'
+      MINDTRUST_OIDC_ISSUER: ${MINDTRUST_OIDC_ISSUER:-}
+      MINDTRUST_OIDC_CLIENT_ID: ${MINDTRUST_OIDC_CLIENT_ID:-}
+      MINDTRUST_OIDC_CLIENT_SECRET: ${MINDTRUST_OIDC_CLIENT_SECRET:-}
+      MINDTRUST_OIDC_REDIRECT_URI: ${MINDTRUST_OIDC_REDIRECT_URI:-}
+      MINDTRUST_OIDC_LABEL: ${MINDTRUST_OIDC_LABEL:-Company SSO}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - workspace-data:/app/data
+    networks:
+      - workspace
+    expose:
+      - '4310'
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 128
+networks:
+  workspace:
+    ipam:
+      config:
+        - subnet: ${WORKSPACE_SUBNET:-172.30.10.0/28}
+volumes:
+  workspace-data:
+  certificates:
+  caddy-config:

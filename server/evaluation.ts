@@ -84,6 +84,8 @@ export async function executeTask(
   let inputTokens = 0,
     outputTokens = 0;
   if (signal?.aborted) throw new Error('Run cancelled');
+  if (task.type === 'external')
+    throw new HttpError(422, 'Externally executed tasks must be rerun by their SDK client');
   if (task.type === 'echo') output = input;
   else if (task.type === 'template') output = renderTemplate(task.template ?? '', input);
   else {
@@ -252,6 +254,7 @@ export function taskTrace(
 
 export class EvaluationQueue {
   private jobs = new Map<string, Promise<void>>();
+  private pending = new Set<string>();
   private controllers = new Map<string, AbortController>();
   private closing = false;
   private occupied = 0;
@@ -261,12 +264,45 @@ export class EvaluationQueue {
     private provider: Provider,
   ) {}
   resume() {
-    for (const experiment of this.store.list<Experiment>('experiment'))
-      if (experiment.status === 'queued' || experiment.status === 'running')
-        this.enqueue(experiment.id);
+    // Read only recoverable IDs, not every historical experiment payload.
+    const resumable = this.store.db
+      .prepare(
+        "SELECT id FROM records WHERE kind='experiment' AND json_extract(value,'$.status') IN ('queued','running') AND COALESCE(json_extract(value,'$.task.type'),'')<>'external' AND COALESCE(json_extract(value,'$.executionSource'),'')<>'sdk-import'",
+      )
+      .all() as { id: string }[];
+    for (const experiment of resumable) this.pending.add(experiment.id);
+    this.pump();
+  }
+  stats() {
+    return {
+      activeJobs: this.jobs.size,
+      queuedJobs: this.pending.size,
+      activeTasks: this.occupied,
+      waitingTasks: this.waiters.length,
+      maxActiveJobs: 4,
+      maxActiveTasks: 16,
+      maxQueuedJobs: 1000,
+      stopping: this.closing,
+    };
+  }
+  assertCapacity() {
+    if (this.closing) throw new HttpError(503, 'Evaluation service is draining; retry shortly');
+    if (this.pending.size >= 1000)
+      throw new HttpError(429, 'Evaluation queue is full; retry after existing runs finish');
   }
   enqueue(id: string) {
-    if (this.closing || this.jobs.has(id)) return;
+    if (this.closing || this.jobs.has(id) || this.pending.has(id)) return;
+    this.pending.add(id);
+    this.pump();
+  }
+  private pump() {
+    while (!this.closing && this.jobs.size < 4 && this.pending.size) {
+      const id = this.pending.values().next().value!;
+      this.pending.delete(id);
+      this.start(id);
+    }
+  }
+  private start(id: string) {
     const job = new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => this.run(id))
       .catch((error) => {
@@ -291,6 +327,7 @@ export class EvaluationQueue {
       .finally(() => {
         this.jobs.delete(id);
         this.controllers.delete(id);
+        this.pump();
       });
     this.jobs.set(id, job);
   }
@@ -349,15 +386,16 @@ export class EvaluationQueue {
       costUsd: unknownCost ? null : knownCost,
       unknownCostCount: unknownCost,
     });
-    const tasks = snapshot.rows
-      .flatMap((row) =>
-        Array.from({ length: experiment.trials }, (_, index) => ({ row, trial: index + 1 })),
-      )
-      .filter(({ row, trial }) => !existing.has(`${row.id}:${trial}`));
+    const totalTasks = snapshot.rows.length * experiment.trials;
     let cursor = 0;
     const worker = async () => {
-      while (cursor < tasks.length && !controller.signal.aborted && !this.closing) {
-        const item = tasks[cursor++];
+      while (cursor < totalTasks && !controller.signal.aborted && !this.closing) {
+        const taskIndex = cursor++;
+        const item = {
+          row: snapshot.rows[Math.floor(taskIndex / experiment.trials)],
+          trial: (taskIndex % experiment.trials) + 1,
+        };
+        if (existing.has(`${item.row.id}:${item.trial}`)) continue;
         const release = await this.slot();
         try {
           if (controller.signal.aborted || this.closing) break;
@@ -430,7 +468,7 @@ export class EvaluationQueue {
       }
     };
     await Promise.all(
-      Array.from({ length: Math.min(experiment.concurrency, Math.max(tasks.length, 1)) }, worker),
+      Array.from({ length: Math.min(experiment.concurrency, Math.max(totalTasks, 1)) }, worker),
     );
     if (this.closing) return;
     const current = this.store.require<Experiment>('experiment', id);
@@ -456,6 +494,7 @@ export class EvaluationQueue {
     )
       return experiment;
     this.controllers.get(id)?.abort();
+    this.pending.delete(id);
     return this.store.put(
       'experiment',
       { ...experiment, status: 'cancelled' as const, finishedAt: new Date().toISOString() },
