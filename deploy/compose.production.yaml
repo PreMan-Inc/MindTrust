@@ -23,6 +23,7 @@ services:
     security_opt:
       - no-new-privileges:true
   mindtrust:
+    image: ${MINDTRUST_IMAGE:-${COMPOSE_PROJECT_NAME}-mindtrust:latest}
     build:
       context: ..
     restart: unless-stopped
