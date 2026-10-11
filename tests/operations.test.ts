@@ -137,6 +137,71 @@ test('SQL pagination and overview preserve status/search/unknown cost semantics 
   }
 });
 
+test('chronological trace pages use indexed ordering and preserve timezone order and stable ties', () => {
+  const store = new Store(':memory:');
+  try {
+    store.put('project', project, 'p');
+    const fixtures = [
+      { id: 'early-offset', startTime: '2026-10-11T12:00:00+02:00', status: 'error' },
+      { id: 'later-utc', startTime: '2026-10-11T11:00:00Z', status: 'error' },
+      { id: 'latest-negative', startTime: '2026-10-11T08:00:00-04:00', status: 'ok' },
+      { id: 'tied-a', startTime: '2026-10-11T12:00:00Z', status: 'error' },
+      { id: 'tied-z', startTime: '2026-10-11T07:00:00-05:00', status: 'error' },
+    ] as const;
+    for (const fixture of fixtures) {
+      const trace = writeTrace(store, 'p', {
+        ...fixture,
+        name: fixture.id,
+        endTime: fixture.startTime,
+      });
+      // Exercise reads of stored ISO offsets independently of ingestion normalization.
+      store.put(
+        'trace',
+        { ...trace, startTime: fixture.startTime, endTime: fixture.startTime },
+        'p',
+      );
+    }
+    const prepare = store.db.prepare.bind(store.db);
+    let selectSql = '';
+    store.db.prepare = ((sql: string) => {
+      if (sql.startsWith('SELECT value FROM records WHERE')) selectSql = sql;
+      return prepare(sql);
+    }) as typeof store.db.prepare;
+    const page = store.queryTraces('p', { limit: 2, offset: 1 });
+    assert.deepEqual(
+      page.items.map((row) => row.id),
+      ['tied-a', 'latest-negative'],
+    );
+    const plan = prepare(`EXPLAIN QUERY PLAN ${selectSql}`).all('p', 2, 1) as { detail: string }[];
+    assert(plan.some((row) => row.detail.includes('traces_chronological')));
+    assert(!plan.some((row) => row.detail.includes('TEMP B-TREE')), JSON.stringify(plan));
+
+    const errors = store.queryTraces('p', { status: 'error', limit: 3, offset: 0 });
+    assert.deepEqual(
+      errors.items.map((row) => row.id),
+      ['tied-z', 'tied-a', 'later-utc'],
+    );
+    const errorPlan = prepare(`EXPLAIN QUERY PLAN ${selectSql}`).all('p', 'error', 3, 0) as {
+      detail: string;
+    }[];
+    assert(errorPlan.some((row) => row.detail.includes('traces_status_chronological')));
+    assert(!errorPlan.some((row) => row.detail.includes('TEMP B-TREE')), JSON.stringify(errorPlan));
+
+    const oldest = store.queryTraces('p', {
+      sort: 'startTime',
+      direction: 'asc',
+      limit: 2,
+      offset: 0,
+    });
+    assert.deepEqual(
+      oldest.items.map((row) => row.id),
+      ['early-offset', 'later-utc'],
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test('evaluation scheduling bounds in-memory active runs and stops without losing queued records', async () => {
   const store = new Store(':memory:');
   const queue = new EvaluationQueue(store, { baseUrl: 'http://localhost' });

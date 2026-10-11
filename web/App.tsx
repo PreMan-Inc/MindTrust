@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react';
+import { CommandMenu } from './command-menu';
+import { LogsPage, TraceTable, TraceDrawer } from './observability';
+export { TraceDrawer } from './observability';
 import {
   Activity,
-  ArrowDownToLine,
   ArrowRight,
   BarChart3,
   BookOpen,
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Code2,
   Database,
   FlaskConical,
-  Layers3,
   Plug,
   LogOut,
   Menu,
@@ -27,26 +27,14 @@ import {
   Waypoints,
   X,
 } from 'lucide-react';
-import type {
-  Dataset,
-  Experiment,
-  Overview,
-  Project,
-  ServerInfo,
-  Span,
-  Trace,
-  TraceDetail,
-} from '../shared/types';
+import type { Experiment, Overview, Project } from '../shared/types';
 import {
   WorkspaceContext,
   api,
-  compact,
   date,
-  download,
   duration,
   money,
   numeric,
-  parseJson,
   percent,
   post,
   qs,
@@ -63,7 +51,6 @@ import {
   Field,
   Form,
   FormActions,
-  JsonBlock,
   Loading,
   Modal,
   PageHeader,
@@ -102,11 +89,26 @@ function WorkspaceApp() {
   const signOutAction = useAction();
   const [page, setPage] = useState(() => location.hash.slice(1) || 'overview');
   const [refresh, setRefresh] = useState(0);
-  const [projectId, setProjectId] = useState('');
+  const projectPreference = `mindtrust-project-${auth.session.principal.id}`;
+  const [projectId, setProjectId] = useState(() => sessionStorage.getItem(projectPreference) || '');
+  useEffect(() => {
+    if (projectId) sessionStorage.setItem(projectPreference, projectId);
+  }, [projectId, projectPreference]);
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [create, setCreate] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [commands, setCommands] = useState(false);
+  useEffect(() => {
+    const shortcut = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommands((open) => !open);
+      }
+    };
+    addEventListener('keydown', shortcut);
+    return () => removeEventListener('keydown', shortcut);
+  }, []);
   const [sdkLink, setSdkLink] = useState(() => {
     const direct = parseSdkExperimentLink(location.pathname);
     return direct.kind === 'none'
@@ -119,7 +121,6 @@ function WorkspaceApp() {
     id: string;
   } | null>(null);
   const projects = useData<Project[]>('/projects', refresh);
-  const info = useData<ServerInfo>('/info', refresh);
   useEffect(() => {
     const handler = () => {
       clearSdkLink();
@@ -217,6 +218,12 @@ function WorkspaceApp() {
         refreshAll: () => setRefresh((x) => x + 1),
         notify: setToast,
         navigate,
+        openExperiment: (id) => {
+          clearSdkLink();
+          setLinkedExperiment({ projectId, id });
+          setPage('experiments');
+          history.replaceState(null, '', `${location.pathname}${location.search}#experiments`);
+        },
       }}
     >
       <div className="app-shell">
@@ -237,39 +244,46 @@ function WorkspaceApp() {
             </span>
           </a>
           <div className="workspace-picker">
-            <div className="workspace-mark">P</div>
+            <div className="workspace-mark">M</div>
             <div>
-              <span className="tiny-label">WORKSPACE</span>
               <strong>Team workspace</strong>
+              <span className="tiny-label">
+                {auth.status.enabled ? 'PRIVATE WORKSPACE' : 'LOCAL DEVELOPMENT'}
+              </span>
             </div>
-            <Badge>{auth.status.enabled ? 'Private' : 'Local'}</Badge>
           </div>
-          <div className="nav-section-label">BUILD WITH CONFIDENCE</div>
+          <button className="command-trigger" onClick={() => setCommands(true)}>
+            <Search size={15} />
+            <span>Jump to…</span>
+            <kbd>⌘ K</kbd>
+          </button>
           <nav aria-label="Main navigation">
-            {navigation.map(({ id, label, icon: Icon }) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                className={`nav-link ${page === id ? 'active' : ''}`}
-                aria-current={page === id ? 'page' : undefined}
-              >
-                <Icon size={17} strokeWidth={1.7} />
-                {label}
-                {page === id && <span className="nav-active-dot" />}
-              </a>
+            {[
+              { label: 'Observe', ids: ['overview', 'logs', 'review'] },
+              { label: 'Develop', ids: ['playground', 'prompts'] },
+              { label: 'Evaluate', ids: ['experiments', 'datasets', 'scorers'] },
+              { label: 'Connect', ids: ['integrations'] },
+            ].map((group) => (
+              <div key={group.label} className="nav-group">
+                <div className="nav-section-label">{group.label}</div>
+                {group.ids
+                  .map((id) => navigation.find((n) => n.id === id)!)
+                  .map(({ id, label, icon: Icon }) => (
+                    <a
+                      key={id}
+                      href={`#${id}`}
+                      className={`nav-link ${page === id ? 'active' : ''}`}
+                      aria-current={page === id ? 'page' : undefined}
+                    >
+                      <Icon size={17} strokeWidth={1.7} />
+                      {label}
+                      {page === id && <span className="nav-active-dot" />}
+                    </a>
+                  ))}
+              </div>
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="local-note">
-              <div className="local-note-icon">
-                <Layers3 size={16} />
-              </div>
-              <strong>Your stack. Your data.</strong>
-              <p>Infrastructure for better agents.</p>
-              <a href="https://github.com/PreMan-Inc/MindTrust" target="_blank" rel="noreferrer">
-                Explore the source <ArrowRight size={13} />
-              </a>
-            </div>
             <a href="#settings" className={`nav-link ${page === 'settings' ? 'active' : ''}`}>
               <Settings size={17} />
               Settings & access
@@ -413,11 +427,10 @@ function WorkspaceApp() {
             )}
           </main>
           <footer className="app-footer">
-            <span>MindTrust · Agent observability & evaluations</span>
-            <span>
-              <i className="footer-dot" />
-              Workspace SQLite storage
-            </span>
+            <span>MindTrust by PreMan</span>
+            <a href="https://github.com/PreMan-Inc/MindTrust" target="_blank" rel="noreferrer">
+              Documentation & source ↗
+            </a>
           </footer>
         </div>
         {toast && (
@@ -428,6 +441,19 @@ function WorkspaceApp() {
               <X size={14} />
             </button>
           </div>
+        )}
+        {commands && (
+          <CommandMenu
+            pages={[...navigation, { id: 'settings', label: 'Settings & access', icon: Settings }]}
+            projects={projects.data || []}
+            navigate={navigate}
+            selectProject={(id) => {
+              clearSdkLink();
+              setProjectId(id);
+              setMobile(false);
+            }}
+            onClose={() => setCommands(false)}
+          />
         )}
         {create && (
           <CreateProject
@@ -548,18 +574,19 @@ function CreateProject({
   );
 }
 function OverviewPage() {
-  const { projectId, project, refresh, navigate } = useWorkspace();
+  const { projectId, project, refresh, navigate, openExperiment } = useWorkspace();
+  const [traceId, setTraceId] = useState<string | null>(null);
   const { data, loading, error } = useData<Overview>(`/overview?${qs({ projectId })}`, refresh);
   return (
     <>
       <PageHeader
-        eyebrow="EVERY RUN TELLS A STORY"
-        title="A clearer view of your agents."
-        description={`Monitor ${project?.name || 'your project'}, understand failures, and turn what you learn into better evaluations.`}
+        eyebrow="PROJECT OVERVIEW"
+        title={project?.name || 'Overview'}
+        description="Monitor quality, latency, and cost. Follow each metric back to the run."
         actions={
           <Button permission="write" variant="primary" onClick={() => navigate('experiments')}>
             <FlaskConical size={16} />
-            Run an evaluation <ArrowRight size={15} />
+            Experiments <ArrowRight size={15} />
           </Button>
         }
       />
@@ -567,8 +594,8 @@ function OverviewPage() {
         <div className="demo-banner">
           <Sparkles size={16} />
           <span>
-            <strong>A workspace to explore.</strong> All sample runs and metrics below are
-            synthetic. No model calls were made.
+            <strong>Demo project.</strong> Synthetic traces and evaluations. No model calls were
+            made.
           </span>
           <button onClick={() => navigate('settings')}>
             Connect your application <ArrowRight size={13} />
@@ -618,7 +645,7 @@ function OverviewPage() {
             </div>
             <div className="overview-charts">
               <Section
-                title="Activity at a glance"
+                title="Trace activity"
                 detail="Trace volume across the recorded period"
                 actions={
                   <div className="chart-legend">
@@ -648,7 +675,7 @@ function OverviewPage() {
                           <span>
                             <i
                               style={{
-                                background: ['#547e42', '#a3bf8a', '#cbd9ba', '#303b32'][i % 4],
+                                background: ['#0d8d71', '#72b8a2', '#adcfc4', '#395c55'][i % 4],
                               }}
                             />
                             {m.model || 'Unspecified'}
@@ -659,7 +686,7 @@ function OverviewPage() {
                           <i
                             style={{
                               width: `${Math.max(2, (m.tokens / Math.max(1, data.totalTokens)) * 100)}%`,
-                              background: ['#547e42', '#a3bf8a', '#cbd9ba', '#303b32'][i % 4],
+                              background: ['#0d8d71', '#72b8a2', '#adcfc4', '#395c55'][i % 4],
                             }}
                           />
                         </div>
@@ -676,7 +703,7 @@ function OverviewPage() {
             </div>
             <Section
               title="Recent experiments"
-              detail="Track progress. Catch regressions before they ship."
+              detail="Latest evaluation runs across this project"
               actions={
                 <Button variant="ghost" onClick={() => navigate('experiments')}>
                   All experiments <ArrowRight size={14} />
@@ -691,7 +718,7 @@ function OverviewPage() {
                         <th>Experiment</th>
                         <th>Status</th>
                         <th>Cases</th>
-                        <th>Avg. score</th>
+                        <th title="Mean across the recorded score metrics">Mean score</th>
                         <th>Created</th>
                       </tr>
                     </thead>
@@ -703,7 +730,7 @@ function OverviewPage() {
                         return (
                           <tr key={e.id}>
                             <td>
-                              <button className="row-title" onClick={() => navigate('experiments')}>
+                              <button className="row-title" onClick={() => openExperiment(e.id)}>
                                 <span className="table-icon">
                                   <FlaskConical size={14} />
                                 </span>
@@ -748,15 +775,16 @@ function OverviewPage() {
                 </Button>
               }
             >
-              <TraceTable traces={data.recentTraces} onSelect={() => navigate('logs')} />
+              <TraceTable traces={data.recentTraces} onSelect={setTraceId} />
             </Section>
             <div className="bottom-note">
               <span className="mini-dot green-dot" />
-              Inspect the recorded runs behind your metrics.
+              Metrics cover all recorded traces in this project.
             </div>
           </>
         )
       )}
+      {traceId && <TraceDrawer id={traceId} onClose={() => setTraceId(null)} />}
     </>
   );
 }
@@ -801,7 +829,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
               width={barWidth}
               height={Math.max(1, height - 15 - y(s.traces))}
               rx="3"
-              fill="#b8d39f"
+              fill="#5eb59b"
             >
               <title>
                 {s.date}: {s.traces} traces, {s.errors} errors
@@ -814,7 +842,7 @@ function ActivityChart({ series }: { series: Overview['series'] }) {
                 width={barWidth}
                 height={height - 15 - y(s.errors)}
                 rx="2"
-                fill="#d58779"
+                fill="#db7b82"
               />
             )}
             {(series.length < 10 || i % Math.ceil(series.length / 7) === 0) && (
@@ -843,435 +871,4 @@ export function Score({
       {delta && value != null ? `${(value * 100).toFixed(1)} pp` : percent(value)}
     </span>
   );
-}
-export function TraceTable({
-  traces,
-  onSelect,
-}: {
-  traces: Trace[];
-  onSelect: (id: string) => void;
-}) {
-  return traces.length ? (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Trace</th>
-            <th>Status</th>
-            <th>Model</th>
-            <th>Duration</th>
-            <th>Cost</th>
-            <th>Started</th>
-          </tr>
-        </thead>
-        <tbody>
-          {traces.map((t) => (
-            <tr key={t.id}>
-              <td>
-                <button className="row-title" onClick={() => onSelect(t.id)}>
-                  <span className={`trace-symbol ${t.status}`}>
-                    <Waypoints size={15} />
-                  </span>
-                  <span>
-                    {t.name}
-                    <small>{t.id.slice(0, 18)}</small>
-                  </span>
-                </button>
-              </td>
-              <td>
-                <Status value={t.status} />
-              </td>
-              <td>
-                <span className="code-tag">{t.model || '—'}</span>
-              </td>
-              <td className="tabular">{duration(t.latencyMs)}</td>
-              <td className="tabular">{money(t.costUsd)}</td>
-              <td className="muted nowrap">{date(t.startTime)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  ) : (
-    <Empty
-      title="No traces found"
-      description="Try changing your filters, or connect your application."
-    />
-  );
-}
-export function LogsPage() {
-  const { projectId, refresh, notify } = useWorkspace();
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('');
-  const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<string | null>(null);
-  const action = useAction();
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setQuery(search);
-      setOffset(0);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search]);
-  const { data, loading, error } = useData<{ items: Trace[]; total: number }>(
-    `/traces?${qs({ projectId, search: query, status, limit: 25, offset })}`,
-    refresh,
-  );
-  return (
-    <>
-      <PageHeader
-        eyebrow="OBSERVABILITY"
-        title="Understand every run."
-        description="Follow your agents from the first request to the final answer."
-        actions={
-          <Button
-            disabled={action.busy}
-            onClick={() =>
-              action.run(async () => {
-                await download(`/traces/export?${qs({ projectId })}`, 'mindtrust-traces.json');
-                notify('Traces exported');
-              })
-            }
-          >
-            <ArrowDownToLine size={15} />
-            Export traces
-          </Button>
-        }
-      />
-      <ErrorBox message={action.error || error} />
-      <div className="panel">
-        <div className="filter-bar">
-          <div className="search-box">
-            <Search size={16} />
-            <input
-              aria-label="Search traces"
-              placeholder="Search traces, inputs, outputs, or tags…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button
-                className="icon-button"
-                aria-label="Clear search"
-                onClick={() => setSearch('')}
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-          <select
-            aria-label="Filter trace status"
-            value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
-              setOffset(0);
-            }}
-          >
-            <option value="">All statuses</option>
-            <option value="ok">Successful</option>
-            <option value="error">Errors</option>
-          </select>
-          <span className="count-label">{data?.total ?? '—'} traces</span>
-        </div>
-        {loading && !data ? (
-          <Loading />
-        ) : (
-          <TraceTable traces={data?.items || []} onSelect={setSelected} />
-        )}
-        <div className="table-footer">
-          <span>
-            {data?.total
-              ? `${offset + 1}–${Math.min(offset + 25, data.total)} of ${data.total} traces`
-              : 'No results'}
-          </span>
-          <div>
-            <Button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 25))}>
-              <ChevronLeft size={14} />
-              Previous
-            </Button>
-            <Button
-              disabled={!data || offset + 25 >= data.total}
-              onClick={() => setOffset(offset + 25)}
-            >
-              Next
-              <ChevronRight size={14} />
-            </Button>
-          </div>
-        </div>
-      </div>
-      {selected && <TraceDrawer id={selected} onClose={() => setSelected(null)} />}
-    </>
-  );
-}
-export function TraceDrawer({ id, onClose }: { id: string; onClose: () => void }) {
-  const { projectId, refresh, refreshAll, notify } = useWorkspace();
-  const detail = useData<TraceDetail>(`/traces/${encodeURIComponent(id)}`, refresh);
-  const datasets = useData<Dataset[]>(`/datasets?${qs({ projectId })}`, refresh);
-  const [tab, setTab] = useState('spans');
-  const [spanId, setSpanId] = useState<string | null>(null);
-  const [label, setLabel] = useState('correct');
-  const [comment, setComment] = useState('');
-  const [expected, setExpected] = useState('null');
-  const [datasetId, setDatasetId] = useState('');
-  const [datasetExpected, setDatasetExpected] = useState('');
-  const action = useAction();
-  const trace = detail.data?.trace;
-  const spans = detail.data?.spans || [];
-  const span = spans.find((s) => s.id === spanId);
-  const content = span || trace;
-  return (
-    <Modal title={trace?.name || 'Trace detail'} description={id} onClose={onClose} drawer>
-      <ErrorBox message={detail.error || action.error} />
-      {detail.loading && !trace ? (
-        <Loading />
-      ) : (
-        trace && (
-          <>
-            <div className="trace-summary">
-              <Status value={trace.status} />
-              <span>{duration(trace.latencyMs)}</span>
-              <span>{numeric(trace.inputTokens + trace.outputTokens)} tokens</span>
-              <span>{money(trace.costUsd)}</span>
-            </div>
-            <div className="tabs" role="tablist" aria-label="Trace views">
-              {['spans', 'input & output', 'metadata', 'review'].map((t) => (
-                <button
-                  role="tab"
-                  aria-selected={tab === t}
-                  key={t}
-                  className={tab === t ? 'active' : ''}
-                  onClick={() => setTab(t)}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-            {tab === 'spans' && (
-              <>
-                <div className="waterfall-head">
-                  <span>Span hierarchy</span>
-                  <span>Duration</span>
-                </div>
-                <div className="span-list">
-                  {spans.length ? (
-                    orderedSpans(spans).map(({ span: s, depth }) => {
-                      const total = Math.max(1, trace.latencyMs);
-                      const start =
-                        new Date(s.startTime).getTime() - new Date(trace.startTime).getTime();
-                      const time = new Date(s.endTime).getTime() - new Date(s.startTime).getTime();
-                      return (
-                        <button
-                          key={s.id}
-                          className={`span-row ${spanId === s.id ? 'selected' : ''}`}
-                          onClick={() => setSpanId(spanId === s.id ? null : s.id)}
-                          style={{ paddingLeft: `${12 + Math.min(depth, 8) * 14}px` }}
-                        >
-                          <span className="span-name">
-                            <span className={`span-kind ${s.kind}`}>
-                              <Code2 size={12} />
-                            </span>
-                            {s.name}
-                            <small>{s.kind}</small>
-                          </span>
-                          <span className="waterfall-track">
-                            <i
-                              className={s.status === 'error' ? 'error' : ''}
-                              style={{
-                                marginLeft: `${Math.min(95, Math.max(0, (start / total) * 100))}%`,
-                                width: `${Math.min(100, Math.max(2, (time / total) * 100))}%`,
-                              }}
-                            />
-                          </span>
-                          <span className="tabular">{duration(time)}</span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <Empty
-                      title="Root trace only"
-                      description="Send nested spans to inspect the full execution tree."
-                    />
-                  )}
-                </div>
-                {span && (
-                  <div className="span-detail">
-                    <div className="subheading">
-                      <h3>{span.name}</h3>
-                      <Status value={span.status} />
-                    </div>
-                    <JsonBlock value={span.input} label="Input" />
-                    <JsonBlock value={span.output} label="Output" />
-                    <JsonBlock value={span.metadata} label="Span metadata" />
-                  </div>
-                )}
-              </>
-            )}
-            {tab === 'input & output' && (
-              <>
-                <JsonBlock value={trace.input} label="Input" />
-                <JsonBlock value={trace.output} label="Output" />
-              </>
-            )}
-            {tab === 'metadata' && (
-              <>
-                <div className="key-value">
-                  <span>Started</span>
-                  <strong>{date(trace.startTime)}</strong>
-                  <span>Model</span>
-                  <strong>{trace.model || 'Unknown'}</strong>
-                  <span>Input / output tokens</span>
-                  <strong>
-                    {trace.inputTokens} / {trace.outputTokens}
-                  </strong>
-                  <span>Tags</span>
-                  <strong>{trace.tags.join(', ') || 'None'}</strong>
-                </div>
-                <JsonBlock value={trace.metadata} label="Metadata" />
-              </>
-            )}
-            {tab === 'review' && (
-              <>
-                <Form
-                  onSubmit={() =>
-                    action.run(async () => {
-                      await post('/annotations', {
-                        projectId,
-                        targetType: 'trace',
-                        targetId: id,
-                        label,
-                        comment,
-                        expected: parseJson(expected, 'Expected output'),
-                      });
-                      setComment('');
-                      refreshAll();
-                      notify('Review saved');
-                    })
-                  }
-                >
-                  <Field label="Evaluation">
-                    <select value={label} onChange={(e) => setLabel(e.target.value)}>
-                      <option value="correct">Correct</option>
-                      <option value="incorrect">Incorrect</option>
-                      <option value="needs_review">Needs review</option>
-                    </select>
-                  </Field>
-                  <Field label="Comment">
-                    <textarea
-                      value={comment}
-                      onChange={(e) => setComment(e.target.value)}
-                      placeholder="What should the team know?"
-                    />
-                  </Field>
-                  <Field label="Expected output (JSON)">
-                    <textarea
-                      className="code-input"
-                      value={expected}
-                      onChange={(e) => setExpected(e.target.value)}
-                    />
-                  </Field>
-                  <FormActions busy={action.busy} label="Save review" />
-                </Form>
-                <div className="annotation-list">
-                  {detail.data?.annotations.map((a) => (
-                    <div className="annotation" key={a.id}>
-                      <div>
-                        <Status value={a.label} />
-                        <span>{date(a.createdAt)}</span>
-                      </div>
-                      <p>{a.comment || 'No comment'}</p>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-            <div className="drawer-dataset">
-              <div>
-                <Database size={16} />
-                <strong>Turn this run into a test</strong>
-              </div>
-              <p>
-                Save this input with an explicitly reviewed expected output. The actual output is
-                never used automatically.
-              </p>
-              <Field
-                label="Expected output (JSON)"
-                hint="Review and enter the correct answer. Use null if the correct value is null."
-              >
-                <textarea
-                  className="code-input"
-                  value={datasetExpected}
-                  onChange={(e) => setDatasetExpected(e.target.value)}
-                  placeholder='"The correct answer"'
-                />
-              </Field>
-              <div className="inline-form" style={{ marginTop: 12 }}>
-                <select
-                  aria-label="Destination dataset"
-                  value={datasetId}
-                  onChange={(e) => setDatasetId(e.target.value)}
-                >
-                  <option value="">Select a dataset</option>
-                  {datasets.data?.map((d) => (
-                    <option value={d.id} key={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-                <Button
-                  permission="write"
-                  disabled={!datasetId || !datasetExpected.trim() || action.busy}
-                  onClick={() =>
-                    action.run(async () => {
-                      await post(`/datasets/${encodeURIComponent(datasetId)}/rows`, {
-                        rows: [
-                          {
-                            input: trace.input,
-                            expected: parseJson(datasetExpected, 'Expected output'),
-                            metadata: { sourceTraceId: trace.id },
-                            tags: trace.tags,
-                          },
-                        ],
-                      });
-                      refreshAll();
-                      notify('Trace added to dataset');
-                    })
-                  }
-                >
-                  <Plus size={14} />
-                  Add
-                </Button>
-              </div>
-            </div>
-          </>
-        )
-      )}
-    </Modal>
-  );
-}
-function orderedSpans(spans: Span[]) {
-  const results: { span: Span; depth: number }[] = [];
-  const visited = new Set<string>();
-  const ids = new Set(spans.map((s) => s.id));
-  function walk(parent: string | null, depth: number) {
-    spans
-      .filter((s) => s.parentId === parent)
-      .forEach((s) => {
-        if (visited.has(s.id)) return;
-        visited.add(s.id);
-        results.push({ span: s, depth });
-        walk(s.id, depth + 1);
-      });
-  }
-  spans
-    .filter((s) => !s.parentId || !ids.has(s.parentId))
-    .forEach((s) => {
-      if (!visited.has(s.id)) {
-        visited.add(s.id);
-        results.push({ span: s, depth: 0 });
-        walk(s.id, 1);
-      }
-    });
-  spans.filter((s) => !visited.has(s.id)).forEach((s) => results.push({ span: s, depth: 0 }));
-  return results;
 }

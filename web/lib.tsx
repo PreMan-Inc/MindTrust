@@ -96,6 +96,7 @@ interface Workspace {
   refreshAll: () => void;
   notify: (message: string) => void;
   navigate: (page: string) => void;
+  openExperiment: (id: string) => void;
 }
 export const WorkspaceContext = createContext<Workspace>(null!);
 export const useWorkspace = () => useContext(WorkspaceContext);

@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   Save,
+  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -60,16 +61,27 @@ import {
   Section,
   Status,
 } from './ui';
-import { TraceDrawer } from './App';
+import { TraceDrawer } from './observability';
 export function PromptsPage() {
   const { projectId, refresh } = useWorkspace();
   const list = useData<Prompt[]>(`/prompts?${qs({ projectId })}`, refresh);
   const [create, setCreate] = useState(false);
   const [selected, setSelected] = useState<Prompt | null>(null);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('updated');
+  const filtered = (list.data || [])
+    .filter((p) =>
+      `${p.name} ${p.description} ${p.model} ${p.template}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+    )
+    .sort((a, b) =>
+      sort === 'name' ? a.name.localeCompare(b.name) : b.updatedAt.localeCompare(a.updatedAt),
+    );
   return (
     <>
       <PageHeader
-        eyebrow="GIVE YOUR AGENTS DIRECTION"
+        eyebrow="DEVELOP"
         title="Prompts"
         description="Version the instructions behind your application. Keep every iteration."
         actions={
@@ -79,12 +91,34 @@ export function PromptsPage() {
           </Button>
         }
       />
+      <div className="prompt-toolbar">
+        <label className="prompt-search">
+          <Search size={16} />
+          <input
+            aria-label="Search prompts"
+            placeholder="Search prompts, models, or instructions…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+        <span className="muted">{filtered.length} prompts</span>
+        <select aria-label="Sort prompts" value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="updated">Recently updated</option>
+          <option value="name">Name A–Z</option>
+        </select>
+      </div>
       <ErrorBox message={list.error} />
       {list.loading && !list.data ? (
         <Loading />
       ) : list.data?.length ? (
         <div className="prompt-grid">
-          {list.data.map((p) => (
+          {!filtered.length && (
+            <Empty
+              title="No matching prompts"
+              description="Try a different name, model, or instruction."
+            />
+          )}
+          {filtered.map((p) => (
             <button key={p.id} className="prompt-card" onClick={() => setSelected(p)}>
               <div className="prompt-card-head">
                 <span className="dataset-icon">
@@ -273,7 +307,7 @@ export function PlaygroundPage() {
   return (
     <>
       <PageHeader
-        eyebrow="A SMALL CHANGE. A BETTER ANSWER."
+        eyebrow="DEVELOP"
         title="Playground"
         description="Try a prompt, inspect the result, and keep a trace of what happened."
       />
@@ -418,11 +452,11 @@ export function PlaygroundPage() {
                 <span />
                 <i />
               </div>
-              <h3>A place to explore.</h3>
+              <h3>Ready when you are.</h3>
               <p>
-                Give your agent an input.
+                Configure a prompt and input.
                 <br />
-                See exactly what comes back.
+                Run it to inspect the output and trace.
               </p>
               <Badge>No calls until you run</Badge>
             </div>
@@ -441,7 +475,7 @@ export function ScorersPage() {
   return (
     <>
       <PageHeader
-        eyebrow="DEFINE WHAT GOOD LOOKS LIKE"
+        eyebrow="EVALUATE"
         title="Scorers"
         description="Repeatable checks for the behaviors that matter to your product."
         actions={

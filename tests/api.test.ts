@@ -486,3 +486,36 @@ test('OTLP JSON preserves child-first parentage and retries without duplicate sp
     await f.close();
   }
 });
+
+test('trace sorting orders the full query before pagination and rejects unsafe sort keys', async () => {
+  const app = await fixture();
+  try {
+    const p = await project(app.api);
+    await app.api('/traces', {
+      projectId: p.id,
+      traces: [
+        { id: 'a', name: 'Alpha', costUsd: null, inputTokens: 40, outputTokens: 1 },
+        { id: 'b', name: 'Beta', costUsd: 0.2, inputTokens: 5, outputTokens: 1 },
+        { id: 'c', name: 'Gamma', costUsd: 0.1, inputTokens: 10, outputTokens: 2 },
+      ],
+    });
+    const query = `/traces?projectId=${p.id}&limit=1`;
+    assert.deepEqual(
+      (await app.api(`${query}&sort=tokens&direction=desc&offset=1`)).data.items.map(
+        (t: { id: string }) => t.id,
+      ),
+      ['c'],
+    );
+    for (const direction of ['asc', 'desc']) {
+      const { data } = await app.api(`${query}&sort=costUsd&direction=${direction}&offset=2`);
+      assert.equal(data.total, 3);
+      assert.equal(data.items[0].id, 'a');
+      assert.equal(data.items[0].costUsd, null);
+    }
+    assert.equal((await app.api(`${query}&sort=name&direction=asc`)).data.items[0].id, 'a');
+    assert.equal((await app.api(`${query}&sort=notAColumn`)).status, 400);
+    assert.equal((await app.api(`${query}&direction=sideways`)).status, 400);
+  } finally {
+    await app.close();
+  }
+});

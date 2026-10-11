@@ -62,6 +62,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_parent ON records(kind,parent_id);
       CREATE INDEX IF NOT EXISTS traces_time ON records(project_id,json_extract(value,'$.startTime') DESC,id) WHERE kind='trace';
       CREATE INDEX IF NOT EXISTS traces_status_time ON records(project_id,json_extract(value,'$.status'),json_extract(value,'$.startTime') DESC,id) WHERE kind='trace';
+      CREATE INDEX IF NOT EXISTS traces_chronological ON records(project_id,(julianday(json_extract(value,'$.startTime'))) IS NULL ASC,julianday(json_extract(value,'$.startTime')) DESC,id DESC) WHERE kind='trace';
+      CREATE INDEX IF NOT EXISTS traces_status_chronological ON records(project_id,json_extract(value,'$.status'),(julianday(json_extract(value,'$.startTime'))) IS NULL ASC,julianday(json_extract(value,'$.startTime')) DESC,id DESC) WHERE kind='trace';
       CREATE TABLE IF NOT EXISTS dataset_versions (dataset_id TEXT NOT NULL, version INTEGER NOT NULL, rows_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(dataset_id,version));
       CREATE TABLE IF NOT EXISTS prompt_versions (prompt_id TEXT NOT NULL, version INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(prompt_id,version));
       CREATE TABLE IF NOT EXISTS experiment_snapshots (experiment_id TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -259,7 +261,14 @@ export class Store {
   }
   queryTraces(
     projectId: string,
-    options: { search?: string; status?: string; limit: number; offset: number },
+    options: {
+      search?: string;
+      status?: string;
+      sort?: 'name' | 'startTime' | 'latencyMs' | 'costUsd' | 'tokens' | 'spanCount';
+      direction?: 'asc' | 'desc';
+      limit: number;
+      offset: number;
+    },
   ): { items: Trace[]; total: number } {
     let where = "kind='trace' AND project_id=?";
     const args: (string | number)[] = [projectId];
@@ -279,9 +288,20 @@ export class Store {
         n: number;
       }
     ).n;
+    const sortExpressions = {
+      name: "lower(json_extract(value,'$.name'))",
+      startTime: "julianday(json_extract(value,'$.startTime'))",
+      latencyMs: "json_extract(value,'$.latencyMs')",
+      costUsd: "json_extract(value,'$.costUsd')",
+      tokens:
+        "coalesce(json_extract(value,'$.inputTokens'),0)+coalesce(json_extract(value,'$.outputTokens'),0)",
+      spanCount: "json_extract(value,'$.spanCount')",
+    };
+    const sort = sortExpressions[options.sort ?? 'startTime'];
+    const direction = options.direction === 'asc' ? 'ASC' : 'DESC';
     const rows = this.db
       .prepare(
-        `SELECT value FROM records WHERE ${where} ORDER BY json_extract(value,'$.startTime') DESC,id DESC LIMIT ? OFFSET ?`,
+        `SELECT value FROM records WHERE ${where} ORDER BY (${sort}) IS NULL ASC, (${sort}) ${direction}, id DESC LIMIT ? OFFSET ?`,
       )
       .all(...args, options.limit, options.offset) as { value: string }[];
     return { total, items: rows.map((r) => JSON.parse(r.value)) };

@@ -1,7 +1,20 @@
-import { useEffect, useRef, type ReactNode, type FormEvent } from 'react';
-import { X, AlertCircle, ArrowUpRight, Inbox, LoaderCircle, ChevronRight } from 'lucide-react';
-import { stringify } from './lib';
+import { useEffect, useRef, useState, type ReactNode, type FormEvent } from 'react';
+import {
+  X,
+  AlertCircle,
+  ArrowUpRight,
+  Inbox,
+  LoaderCircle,
+  ChevronRight,
+  Copy,
+  Check,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
+import { stringify, copy } from './lib';
 import { usePermissions } from './session';
+let openModalCount = 0;
+let originalBodyOverflow = '';
 export function Button({
   children,
   variant = 'secondary',
@@ -158,10 +171,13 @@ export function Modal({
   useEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
+    if (openModalCount === 0) originalBodyOverflow = document.body.style.overflow;
+    openModalCount += 1;
     document.body.style.overflow = 'hidden';
     return () => {
       dialog.close();
-      document.body.style.overflow = '';
+      openModalCount -= 1;
+      if (openModalCount === 0) document.body.style.overflow = originalBodyOverflow;
     };
   }, []);
   return (
@@ -264,10 +280,54 @@ export function FormActions({
   );
 }
 export function JsonBlock({ value, label }: { value: unknown; label?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const text = value === undefined ? 'Not recorded' : (stringify(value) ?? 'null');
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1800);
+    return () => clearTimeout(timer);
+  }, [copied]);
   return (
     <div className="json-block">
-      {label && <div className="json-label">{label}</div>}
-      <pre>{stringify(value) ?? 'null'}</pre>
+      <div className="json-toolbar">
+        <span className="json-label">{label || 'JSON'}</span>
+        <div>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label || 'JSON'}`}
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Copy ${label || 'JSON'}`}
+            disabled={value === undefined}
+            onClick={async () => {
+              try {
+                await copy(text);
+                setCopied(true);
+                setError('');
+              } catch {
+                setError('Unable to copy. Select the text to copy it manually.');
+              }
+            }}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        </div>
+      </div>
+      <pre className={expanded ? '' : 'json-preview'}>{text}</pre>
+      {error && (
+        <div className="json-copy-error" role="status">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

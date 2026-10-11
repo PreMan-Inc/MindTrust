@@ -365,9 +365,19 @@ export function createApp(options: AppOptions = {}) {
     if (req.query.search !== undefined && typeof req.query.search !== 'string')
       throw new HttpError(400, 'Invalid search query');
     const search = String(req.query.search ?? '').toLocaleLowerCase();
+    const sorting = parse(
+      z.object({
+        sort: z
+          .enum(['name', 'startTime', 'latencyMs', 'costUsd', 'tokens', 'spanCount'])
+          .optional(),
+        direction: z.enum(['asc', 'desc']).optional(),
+      }),
+      req.query,
+    );
     res.json(
       store.queryTraces(projectId, {
         search,
+        ...sorting,
         status: req.query.status as string | undefined,
         limit,
         offset,

@@ -1,7 +1,23 @@
 import { useEffect, useState } from 'react';
+import './evaluation-console.css';
+import {
+  averageScore,
+  comparisonChange,
+  filterDatasetRows,
+  matchesEvaluationSearch,
+  sortExperiments,
+  type ComparisonChange,
+  type ExperimentSort,
+} from './evaluation-model';
 import { usePermissions } from './session';
 import {
   ArrowDownToLine,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  Eye,
+  Filter,
   ArrowLeftRight,
   ArrowRight,
   ArrowUpFromLine,
@@ -13,7 +29,6 @@ import {
   FlaskConical,
   GitCompareArrows,
   History,
-  MoreHorizontal,
   Pencil,
   Plus,
   Search,
@@ -30,7 +45,6 @@ import type {
   EvalCase,
   Experiment,
   ExperimentDetail,
-  Json,
   Scorer,
   ServerInfo,
   TaskConfig,
@@ -43,7 +57,6 @@ import {
   duration,
   money,
   parseJson,
-  percent,
   post,
   qs,
   useAction,
@@ -63,7 +76,6 @@ import {
   Loading,
   Modal,
   PageHeader,
-  Section,
   Stat,
   Status,
 } from './ui';
@@ -74,16 +86,22 @@ export function DatasetsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [create, setCreate] = useState(false);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('updated');
   if (selected) return <DatasetView id={selected} onBack={() => setSelected(null)} />;
-  const filtered = data?.filter((d) =>
-    `${d.name} ${d.description}`.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = data
+    ?.filter((d) => matchesEvaluationSearch([d.name, d.description, d.id], search))
+    .sort((a, b) =>
+      sort === 'name'
+        ? a.name.localeCompare(b.name)
+        : sort === 'examples'
+          ? b.rowCount - a.rowCount
+          : b.updatedAt.localeCompare(a.updatedAt),
+    );
   return (
-    <>
+    <div className="eval-console">
       <PageHeader
-        eyebrow="THE FOUNDATION OF GOOD EVALUATIONS"
         title="Datasets"
-        description="Curate meaningful examples. Build a versioned source of truth."
+        description="Your ground truth. Versioned, inspectable, ready to evaluate."
         actions={
           <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
             <Plus size={16} />
@@ -92,60 +110,114 @@ export function DatasetsPage() {
         }
       />
       <ErrorBox message={error} />
-      <div className="panel">
+      <div className="eval-overview-strip">
+        <div>
+          <Database size={16} />
+          <strong>{data?.length ?? '—'}</strong>
+          <span>datasets</span>
+        </div>
+        <div>
+          <FileJson size={16} />
+          <strong>
+            {data?.reduce((sum, row) => sum + row.rowCount, 0).toLocaleString() ?? '—'}
+          </strong>
+          <span>examples in latest versions</span>
+        </div>
+        <div className="eval-strip-note">
+          <History size={15} />
+          Every edit is preserved in version history
+        </div>
+      </div>
+      <div className="panel eval-table-panel">
         <div className="filter-bar">
           <div className="search-box">
             <Search size={16} />
             <input
-              placeholder="Find a dataset…"
+              placeholder="Search datasets…"
               aria-label="Search datasets"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="count-label">
-            {filtered?.length || 0} {filtered?.length === 1 ? 'dataset' : 'datasets'}
-          </span>
+          <div className="filter-spacer" />
+          <select aria-label="Sort datasets" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="updated">Recently updated</option>
+            <option value="name">Name A–Z</option>
+            <option value="examples">Most examples</option>
+          </select>
         </div>
         {loading && !data ? (
           <Loading />
         ) : filtered?.length ? (
-          <div className="dataset-grid">
-            {filtered.map((d) => (
-              <button key={d.id} className="dataset-card" onClick={() => setSelected(d.id)}>
-                <div className="dataset-card-top">
-                  <span className="dataset-icon">
-                    <Database size={21} />
-                  </span>
-                  <div className="tag-list">
-                    {d.id === 'demo-dataset' && <Badge tone="amber">Synthetic</Badge>}
-                    <Badge>v{d.version}</Badge>
-                  </div>
-                </div>
-                <h3>{d.name}</h3>
-                <p>{d.description || 'A versioned collection of evaluation examples.'}</p>
-                <div className="dataset-card-bottom">
-                  <span>
-                    <FileJson size={13} />
-                    {d.rowCount} examples
-                  </span>
-                  <ArrowRight size={15} />
-                </div>
-                <small>Updated {date(d.updatedAt)}</small>
-              </button>
-            ))}
+          <div className="table-wrap">
+            <table className="eval-datasets-table">
+              <thead>
+                <tr>
+                  <th>Dataset</th>
+                  <th>Examples</th>
+                  <th>Version</th>
+                  <th>Last updated</th>
+                  <th aria-label="Open dataset" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((d) => (
+                  <tr key={d.id}>
+                    <td>
+                      <button className="row-title" onClick={() => setSelected(d.id)}>
+                        <span className="eval-resource-icon">
+                          <Database size={17} />
+                        </span>
+                        <span>
+                          {d.name}
+                          <small>{d.description || 'No description'}</small>
+                        </span>
+                      </button>
+                    </td>
+                    <td className="tabular">{d.rowCount.toLocaleString()}</td>
+                    <td>
+                      <Badge>v{d.version}</Badge>
+                      {d.id === 'demo-dataset' && <Badge tone="amber">Synthetic</Badge>}
+                    </td>
+                    <td className="muted nowrap">{date(d.updatedAt)}</td>
+                    <td>
+                      <button
+                        className="icon-button"
+                        aria-label={`Open ${d.name}`}
+                        onClick={() => setSelected(d.id)}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <Empty
-            title="Create a reliable starting point"
-            description="Add your own examples, import JSON, or save a production trace."
+            title={search ? 'No datasets match your search' : 'Build your first evaluation dataset'}
+            description={
+              search
+                ? 'Try a different name or description.'
+                : 'Add examples, import JSON, or turn a production trace into a test.'
+            }
             action={
-              <Button permission="write" onClick={() => setCreate(true)}>
-                <Plus size={15} />
-                Create dataset
-              </Button>
+              search ? (
+                <Button onClick={() => setSearch('')}>Clear search</Button>
+              ) : (
+                <Button permission="write" onClick={() => setCreate(true)}>
+                  <Plus size={15} />
+                  Create dataset
+                </Button>
+              )
             }
           />
+        )}
+        {!!filtered?.length && (
+          <div className="eval-table-footer">
+            {filtered.length} of {data?.length} datasets
+          </div>
         )}
       </div>
       {create && (
@@ -157,7 +229,7 @@ export function DatasetsPage() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 function CreateDataset({
@@ -213,19 +285,45 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
   const { canWrite } = usePermissions();
   const { refresh, refreshAll, notify } = useWorkspace();
   const [version, setVersion] = useState('');
+  const [runningExperiment, setRunningExperiment] = useState(false);
+  const [createdExperimentId, setCreatedExperimentId] = useState<string | null>(null);
   const detail = useData<DatasetDetail>(
     `/datasets/${encodeURIComponent(id)}${version ? `?version=${version}` : ''}`,
     refresh,
   );
   const [editing, setEditing] = useState<DatasetRow | 'new' | null>(null);
+  const [inspecting, setInspecting] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [deleting, setDeleting] = useState<DatasetRow | null>(null);
+  const [search, setSearch] = useState('');
+  const [tag, setTag] = useState('');
+  const [expectedFilter, setExpectedFilter] = useState<'all' | 'provided' | 'missing'>('all');
+  const [history, setHistory] = useState(false);
+  const [page, setPage] = useState(0);
   const action = useAction();
   const data = detail.data;
-  const historical =
-    !!version && !!data && Number(version) !== Math.max(...data.versions.map((v) => v.version));
+  const latest = data ? Math.max(...data.versions.map((v) => v.version)) : 0;
+  const historical = !!version && !!data && Number(version) !== latest;
+  const readOnly = historical || !canWrite || detail.loading;
+  const filtered = filterDatasetRows(data?.rows ?? [], search, tag, expectedFilter);
+  const pages = Math.max(1, Math.ceil(filtered.length / 50));
+  const currentPage = Math.min(page, pages - 1);
+  const visible = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
+  const inspected = data?.rows.find((row) => row.id === inspecting);
+  const tags = [...new Set(data?.rows.flatMap((row) => row.tags) ?? [])].sort();
+  useEffect(() => {
+    setPage(0);
+  }, [search, tag, expectedFilter, version]);
+  if (createdExperimentId)
+    return (
+      <ExperimentView
+        id={createdExperimentId}
+        onBack={() => setCreatedExperimentId(null)}
+        backLabel="Back to dataset"
+      />
+    );
   return (
-    <>
+    <div className="eval-console">
       <Back onClick={onBack}>All datasets</Back>
       <PageHeader
         title={data?.dataset.name || 'Dataset'}
@@ -233,7 +331,7 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
         actions={
           <>
             <Button
-              disabled={action.busy}
+              disabled={action.busy || detail.loading}
               onClick={() =>
                 action.run(() =>
                   download(
@@ -246,15 +344,18 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
               <ArrowDownToLine size={15} />
               Export
             </Button>
-            <Button disabled={historical || !canWrite} onClick={() => setImporting(true)}>
+            <Button disabled={readOnly} onClick={() => setImporting(true)}>
               <ArrowUpFromLine size={15} />
               Import JSON
             </Button>
             <Button
-              variant="primary"
-              disabled={historical || !canWrite}
-              onClick={() => setEditing('new')}
+              disabled={readOnly || !data?.rows.length}
+              onClick={() => setRunningExperiment(true)}
             >
+              <FlaskConical size={15} />
+              Run experiment
+            </Button>
+            <Button variant="primary" disabled={readOnly} onClick={() => setEditing('new')}>
               <Plus size={15} />
               Add example
             </Button>
@@ -265,118 +366,288 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
       {historical && (
         <div className="info-banner">
           <History size={16} />
-          You’re viewing a historical snapshot. Select the latest version to edit examples.
+          Viewing snapshot v{version}. Choose the latest version to edit examples.
         </div>
       )}
-      <div className="panel">
-        <div className="filter-bar">
-          <span className="count-label">
-            <Database size={15} />
-            {data?.rows.length || 0} {data?.rows.length === 1 ? 'example' : 'examples'}
-          </span>
-          <div className="filter-spacer" />
-          <History size={15} />
-          <select
-            aria-label="Dataset version"
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}
+      <div className="eval-dataset-toolbar">
+        <div className="eval-tabs">
+          <button
+            className={!history ? 'active' : ''}
+            aria-pressed={!history}
+            onClick={() => setHistory(false)}
           >
-            <option value="">
-              Latest version{data ? ` · v${Math.max(...data.versions.map((v) => v.version))}` : ''}
-            </option>
-            {data?.versions.map((v) => (
-              <option key={v.version} value={v.version}>
-                v{v.version} · {v.rowCount} {v.rowCount === 1 ? 'example' : 'examples'} ·{' '}
-                {date(v.createdAt)}
-              </option>
-            ))}
-          </select>
+            <FileJson size={15} />
+            Examples <span>{data?.rows.length ?? 0}</span>
+          </button>
+          <button
+            className={history ? 'active' : ''}
+            aria-pressed={history}
+            onClick={() => setHistory(true)}
+          >
+            <History size={15} />
+            Version history <span>{data?.versions.length ?? 0}</span>
+          </button>
         </div>
-        {detail.loading && !data ? (
-          <Loading />
-        ) : data?.rows.length ? (
-          <div className="table-wrap">
-            <table className="dataset-table">
-              <thead>
-                <tr>
-                  <th>Input</th>
-                  <th>Expected output</th>
-                  <th>Tags</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((row) => (
-                  <tr key={row.id}>
-                    <td>
-                      <button className="cell-json" onClick={() => setEditing(row)}>
-                        {compact(row.input)}
-                      </button>
-                      <small className="row-id">{row.id.slice(0, 20)}</small>
-                    </td>
-                    <td>
-                      {row.hasExpected === false ? (
-                        <span className="muted">Not provided</span>
-                      ) : (
-                        <span className="cell-json">{compact(row.expected)}</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="tag-list">
-                        {row.tags.map((t) => (
-                          <Badge key={t}>{t}</Badge>
-                        ))}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="icon-button"
-                          onClick={() => setEditing(row)}
-                          aria-label={historical || !canWrite ? 'View example' : 'Edit example'}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          className="icon-button danger-icon"
-                          disabled={historical || !canWrite}
-                          onClick={() => setDeleting(row)}
-                          aria-label="Delete example"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty
-            title="No examples yet"
-            description="Add an input and its expected output to start evaluating."
-            action={
-              <Button disabled={historical || !canWrite} onClick={() => setEditing('new')}>
-                Add your first example
-              </Button>
-            }
-          />
-        )}
+        <select
+          aria-label="Dataset version"
+          value={version}
+          disabled={detail.loading}
+          onChange={(e) => {
+            setVersion(e.target.value);
+            setInspecting(null);
+          }}
+        >
+          <option value="">Latest{latest ? ` · v${latest}` : ''}</option>
+          {data?.versions.map((v) => (
+            <option key={v.version} value={v.version}>
+              v{v.version} · {date(v.createdAt)}
+            </option>
+          ))}
+        </select>
       </div>
+      {history ? (
+        <div className="panel eval-history-panel">
+          <div className="panel-head">
+            <div>
+              <h2>Version history</h2>
+              <p>Each snapshot preserves the examples used in your evaluations.</p>
+            </div>
+          </div>
+          {detail.loading && !data ? (
+            <Loading />
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Version</th>
+                    <th>Examples</th>
+                    <th>Created</th>
+                    <th aria-label="Inspect version" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data?.versions.map((v) => (
+                    <tr key={v.version}>
+                      <td>
+                        <Badge>v{v.version}</Badge>
+                        {v.version === latest && <span className="eval-inline-label">Latest</span>}
+                      </td>
+                      <td>{v.rowCount.toLocaleString()}</td>
+                      <td>{date(v.createdAt)}</td>
+                      <td>
+                        <Button
+                          onClick={() => {
+                            setVersion(v.version === latest ? '' : String(v.version));
+                            setHistory(false);
+                            setInspecting(null);
+                          }}
+                        >
+                          Inspect snapshot <ArrowRight size={13} />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className={`eval-split ${inspected ? 'with-inspector' : ''}`}>
+          <div className="panel eval-table-panel">
+            <div className="filter-bar">
+              <div className="search-box">
+                <Search size={15} />
+                <input
+                  aria-label="Search dataset examples"
+                  placeholder="Search input, expected, tags, metadata…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <select
+                aria-label="Filter by tag"
+                value={tag}
+                onChange={(e) => setTag(e.target.value)}
+              >
+                <option value="">All tags</option>
+                {tags.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter by expected output"
+                value={expectedFilter}
+                onChange={(e) => setExpectedFilter(e.target.value as typeof expectedFilter)}
+              >
+                <option value="all">Any ground truth</option>
+                <option value="provided">Expected provided</option>
+                <option value="missing">Expected missing</option>
+              </select>
+            </div>
+            {detail.loading ? (
+              <Loading />
+            ) : visible.length ? (
+              <div className="table-wrap">
+                <table className="eval-example-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Input</th>
+                      <th>Expected output</th>
+                      <th>Tags</th>
+                      <th aria-label="Inspect example" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((row, i) => (
+                      <tr key={row.id} className={inspecting === row.id ? 'eval-selected-row' : ''}>
+                        <td className="eval-row-number">{currentPage * 50 + i + 1}</td>
+                        <td>
+                          <button className="cell-json" onClick={() => setInspecting(row.id)}>
+                            {compact(row.input)}
+                          </button>
+                          <small className="row-id">{row.id}</small>
+                        </td>
+                        <td>
+                          {row.hasExpected === false ? (
+                            <span className="eval-missing">Not provided</span>
+                          ) : (
+                            <span className="cell-json">{compact(row.expected)}</span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="tag-list">
+                            {row.tags.map((t) => (
+                              <button className="eval-tag" key={t} onClick={() => setTag(t)}>
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <button
+                            className="icon-button"
+                            aria-label={`Inspect example ${row.id}`}
+                            onClick={() => setInspecting(row.id)}
+                          >
+                            <Eye size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <Empty
+                title={data?.rows.length ? 'No matching examples' : 'No examples yet'}
+                description={
+                  data?.rows.length
+                    ? 'Adjust the search or filters to see more examples.'
+                    : 'Add an input and optional ground truth, or import a JSON dataset.'
+                }
+                action={
+                  data?.rows.length ? (
+                    <Button
+                      onClick={() => {
+                        setSearch('');
+                        setTag('');
+                        setExpectedFilter('all');
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  ) : (
+                    <Button disabled={readOnly} onClick={() => setEditing('new')}>
+                      Add your first example
+                    </Button>
+                  )
+                }
+              />
+            )}
+            <EvalPagination
+              page={currentPage}
+              count={filtered.length}
+              total={data?.rows.length}
+              onPage={setPage}
+            />
+          </div>
+          {inspected && (
+            <aside className="eval-inspector" aria-label="Example details">
+              <div className="eval-inspector-head">
+                <div>
+                  <span className="eyebrow">EXAMPLE</span>
+                  <h3>Inspect ground truth</h3>
+                </div>
+                <button
+                  className="icon-button"
+                  aria-label="Close example details"
+                  onClick={() => setInspecting(null)}
+                >
+                  <X size={17} />
+                </button>
+              </div>
+              <div className="eval-inspector-body">
+                <code className="eval-record-id">{inspected.id}</code>
+                <JsonBlock label="Input" value={inspected.input} />
+                {inspected.hasExpected === false ? (
+                  <div className="eval-no-ground-truth">
+                    <strong>No expected output</strong>
+                    <p>
+                      This example has no ground truth. An explicit JSON null is treated separately.
+                    </p>
+                  </div>
+                ) : (
+                  <JsonBlock label="Expected output" value={inspected.expected} />
+                )}
+                <JsonBlock label="Metadata" value={inspected.metadata} />
+                <div className="tag-list">
+                  {inspected.tags.map((t) => (
+                    <Badge key={t}>{t}</Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="eval-inspector-actions">
+                <Button disabled={readOnly} onClick={() => setEditing(inspected)}>
+                  <Pencil size={14} />
+                  Edit example
+                </Button>
+                <Button variant="ghost" disabled={readOnly} onClick={() => setDeleting(inspected)}>
+                  <Trash2 size={14} />
+                  Remove
+                </Button>
+              </div>
+            </aside>
+          )}
+        </div>
+      )}
       {editing && (
         <DatasetRowEditor
           datasetId={id}
           row={editing === 'new' ? undefined : editing}
-          readOnly={historical || !canWrite}
+          readOnly={readOnly}
           onClose={() => setEditing(null)}
         />
-      )}{' '}
-      {importing && <ImportRows id={id} onClose={() => setImporting(false)} />}{' '}
+      )}
+      {runningExperiment && (
+        <CreateExperiment
+          initialDatasetId={id}
+          onClose={() => setRunningExperiment(false)}
+          onCreated={(experiment) => {
+            setRunningExperiment(false);
+            setCreatedExperimentId(experiment.id);
+          }}
+        />
+      )}
+      {importing && <ImportRows id={id} onClose={() => setImporting(false)} />}
       {deleting && (
         <Modal
           title="Remove this example?"
-          description="Previous dataset versions will retain this example. A new version will be created."
+          description="Earlier snapshots retain this example. Removal creates a new version."
           onClose={() => setDeleting(null)}
         >
           <JsonBlock label="Input" value={deleting.input} />
@@ -391,11 +662,10 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
                 action.run(async () => {
                   await api(
                     `/datasets/${encodeURIComponent(id)}/rows/${encodeURIComponent(deleting.id)}`,
-                    {
-                      method: 'DELETE',
-                    },
+                    { method: 'DELETE' },
                   );
                   setDeleting(null);
+                  setInspecting(null);
                   refreshAll();
                   notify('Example removed in a new dataset version');
                 })
@@ -406,7 +676,51 @@ function DatasetView({ id, onBack }: { id: string; onBack: () => void }) {
           </div>
         </Modal>
       )}
-    </>
+    </div>
+  );
+}
+
+function EvalPagination({
+  page,
+  count,
+  total,
+  onPage,
+}: {
+  page: number;
+  count: number;
+  total?: number;
+  onPage: (page: number) => void;
+}) {
+  return (
+    <div className="eval-table-footer">
+      <span>
+        {count
+          ? `${page * 50 + 1}–${Math.min((page + 1) * 50, count)} of ${count.toLocaleString()}`
+          : '0 results'}
+        {total !== undefined && count !== total ? ` · ${total.toLocaleString()} total` : ''}
+      </span>
+      <div>
+        <Button
+          variant="ghost"
+          disabled={page === 0}
+          onClick={() => onPage(page - 1)}
+          aria-label="Previous results page"
+        >
+          <ChevronLeft size={15} />
+        </Button>
+        <span>
+          Page {page + 1} of {Math.max(1, Math.ceil(count / 50))}
+        </span>
+        <Button
+          variant="ghost"
+          disabled={(page + 1) * 50 >= count}
+          onClick={() => onPage(page + 1)}
+          aria-label="Next results page"
+        >
+          <ChevronRight size={15} />
+        </Button>
+      </div>
+    </div>
   );
 }
 function DatasetRowEditor({
@@ -579,21 +893,29 @@ function ImportRows({ id, onClose }: { id: string; onClose: () => void }) {
 export function ExperimentsPage({
   linkedExperimentId,
   onLeaveLinkedExperiment,
-}: {
-  linkedExperimentId?: string;
-  onLeaveLinkedExperiment?: () => void;
-} = {}) {
+}: { linkedExperimentId?: string; onLeaveLinkedExperiment?: () => void } = {}) {
   const { projectId, refresh } = useWorkspace();
   const list = useData<Experiment[]>(`/experiments?${qs({ projectId })}`, refresh);
+  const datasets = useData<Dataset[]>(`/datasets?${qs({ projectId })}`, refresh);
   const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
+  const [scoreMetric, setScoreMetric] = useState('');
   const [selected, setSelected] = useState<string | null>(linkedExperimentId || null);
   const [create, setCreate] = useState(false);
-  const [compare, setCompare] = useState<string[]>([]);
+  const [baseline, setBaseline] = useState('');
+  const [candidate, setCandidate] = useState('');
   const [comparing, setComparing] = useState(false);
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [dataset, setDataset] = useState('');
+  const [sort, setSort] = useState<ExperimentSort>('created');
+  const [ascending, setAscending] = useState(false);
+  const [page, setPage] = useState(0);
   useEffect(() => {
     if (linkedExperimentId) setSelected(linkedExperimentId);
   }, [linkedExperimentId]);
+  useEffect(() => {
+    setPage(0);
+  }, [search, status, dataset, sort, ascending, scoreMetric]);
   useEffect(() => {
     if (list.data?.some((e) => ['running', 'queued'].includes(e.status))) {
       const timer = setInterval(list.reload, 1500);
@@ -610,97 +932,271 @@ export function ExperimentsPage({
         }}
       />
     );
-  if (comparing && compare.length === 2)
+  if (comparing && baseline && candidate)
     return (
-      <CompareView
-        baseline={compare[0]}
-        candidate={compare[1]}
-        onBack={() => setComparing(false)}
-      />
+      <CompareView baseline={baseline} candidate={candidate} onBack={() => setComparing(false)} />
     );
-  const filtered = list.data?.filter((e) => e.name.toLowerCase().includes(search.toLowerCase()));
-  function toggle(id: string) {
-    setCompare((c) =>
-      c.includes(id) ? c.filter((v) => v !== id) : c.length < 2 ? [...c, id] : [c[1], id],
+  const filtered = sortExperiments(
+    (list.data ?? []).filter(
+      (e) =>
+        matchesEvaluationSearch([e.name, e.description, e.task, e.executionSource], search) &&
+        (!status || status === e.status) &&
+        (!dataset || dataset === e.datasetId),
+    ),
+    sort,
+    ascending,
+    scoreMetric,
+  );
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
+  const visible = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
+  const running = list.data?.filter((e) => ['running', 'queued'].includes(e.status)).length ?? 0;
+  const completed = list.data?.filter((e) => e.status === 'completed').length ?? 0;
+  function selectForCompare(id: string) {
+    if (baseline === id) setBaseline('');
+    else if (candidate === id) setCandidate('');
+    else if (!baseline) setBaseline(id);
+    else setCandidate(id);
+  }
+  function sortColumn(label: string, field: ExperimentSort) {
+    return (
+      <th aria-sort={sort === field ? (ascending ? 'ascending' : 'descending') : 'none'}>
+        <button
+          className="eval-sort-button"
+          onClick={() => {
+            setSort(field);
+            setAscending(
+              sort === field
+                ? !ascending
+                : field === 'name' || field === 'latency' || field === 'cost',
+            );
+          }}
+        >
+          {label}
+          {sort === field ? (
+            ascending ? (
+              <ArrowUp size={12} />
+            ) : (
+              <ArrowDown size={12} />
+            )
+          ) : (
+            <ArrowUpDown size={12} />
+          )}
+        </button>
+      </th>
     );
   }
   return (
-    <>
+    <div className="eval-console">
       <PageHeader
-        eyebrow="EVALUATE. COMPARE. IMPROVE."
         title="Experiments"
-        description="Find out what works, with repeatable tests and evidence at every step."
+        description="Compare quality, latency, and cost before you ship a change."
         actions={
-          <>
-            <Button disabled={compare.length !== 2} onClick={() => setComparing(true)}>
-              <GitCompareArrows size={16} />
-              Compare{compare.length ? ` (${compare.length}/2)` : ''}
-            </Button>
-            <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
-              <Plus size={16} />
-              New experiment
-            </Button>
-          </>
+          <Button permission="write" variant="primary" onClick={() => setCreate(true)}>
+            <Plus size={16} />
+            New experiment
+          </Button>
         }
       />
-      <ErrorBox message={list.error} />
-      <div className="panel">
+      <ErrorBox message={list.error || datasets.error || scorers.error} />
+      <div className="eval-overview-strip">
+        <div>
+          <FlaskConical size={16} />
+          <strong>{list.data?.length ?? '—'}</strong>
+          <span>experiments</span>
+        </div>
+        <div>
+          <Check size={16} />
+          <strong>{completed}</strong>
+          <span>completed</span>
+        </div>
+        <div>
+          <Clock3 size={16} />
+          <strong>{running}</strong>
+          <span>in progress</span>
+        </div>
+        <div className="eval-strip-note">
+          <GitCompareArrows size={15} />
+          Select two runs to compare results
+        </div>
+      </div>
+      <div className="eval-comparison-picker">
+        <GitCompareArrows size={19} />
+        <label>
+          <span>Baseline</span>
+          <select
+            aria-label="Baseline experiment"
+            value={baseline}
+            onChange={(ev) => {
+              setBaseline(ev.target.value);
+              if (ev.target.value === candidate) setCandidate('');
+            }}
+          >
+            <option value="">Choose a baseline…</option>
+            {list.data?.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="icon-button"
+          aria-label="Swap selected experiments"
+          disabled={!baseline || !candidate}
+          onClick={() => {
+            setBaseline(candidate);
+            setCandidate(baseline);
+          }}
+        >
+          <ArrowLeftRight size={16} />
+        </button>
+        <label>
+          <span>Candidate</span>
+          <select
+            aria-label="Candidate experiment"
+            value={candidate}
+            onChange={(ev) => setCandidate(ev.target.value)}
+          >
+            <option value="">Choose a candidate…</option>
+            {list.data
+              ?.filter((e) => e.id !== baseline)
+              .map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <Button
+          variant="primary"
+          disabled={!baseline || !candidate || baseline === candidate}
+          onClick={() => setComparing(true)}
+        >
+          Compare runs
+          <ArrowRight size={14} />
+        </Button>
+        {(baseline || candidate) && (
+          <button
+            className="icon-button"
+            aria-label="Clear comparison selection"
+            onClick={() => {
+              setBaseline('');
+              setCandidate('');
+            }}
+          >
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      <div className="panel eval-table-panel">
         <div className="filter-bar">
           <div className="search-box">
             <Search size={16} />
             <input
               aria-label="Search experiments"
-              placeholder="Find an experiment…"
+              placeholder="Search experiments or models…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(ev) => setSearch(ev.target.value)}
             />
           </div>
-          <span className="count-label">
-            {filtered?.length || 0} {filtered?.length === 1 ? 'experiment' : 'experiments'}
-          </span>
+          <select
+            aria-label="Filter experiment status"
+            value={status}
+            onChange={(ev) => setStatus(ev.target.value)}
+          >
+            <option value="">All statuses</option>
+            {['completed', 'running', 'queued', 'failed', 'cancelled'].map((s) => (
+              <option key={s} value={s}>
+                {s[0].toUpperCase() + s.slice(1)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter experiment dataset"
+            value={dataset}
+            onChange={(ev) => setDataset(ev.target.value)}
+          >
+            <option value="">All datasets</option>
+            {datasets.data?.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Experiment score metric"
+            value={scoreMetric}
+            onChange={(event) => setScoreMetric(event.target.value)}
+          >
+            <option value="">Mean of all scores</option>
+            {[...new Set(list.data?.flatMap((e) => Object.keys(e.scores)) ?? [])].map((id) => (
+              <option key={id} value={id}>
+                {scorers.data?.find((s) => s.id === id)?.name || id}
+              </option>
+            ))}
+          </select>
         </div>
         {list.loading && !list.data ? (
           <Loading />
-        ) : filtered?.length ? (
+        ) : visible.length ? (
           <div className="table-wrap">
-            <table>
+            <table className="eval-experiments-table">
               <thead>
                 <tr>
-                  <th className="checkbox-col" />
-                  <th>Experiment</th>
+                  <th className="checkbox-col" aria-label="Select for comparison" />
+                  {sortColumn('Experiment', 'name')}
                   <th>Status</th>
                   <th>Cases</th>
-                  <th>Mean score</th>
-                  <th>Scorers</th>
-                  <th>Latency</th>
-                  <th>Cost</th>
-                  <th>Created</th>
+                  {sortColumn(
+                    scoreMetric
+                      ? scorers.data?.find((s) => s.id === scoreMetric)?.name || scoreMetric
+                      : 'Mean score',
+                    'score',
+                  )}
+                  {sortColumn('Latency', 'latency')}
+                  {sortColumn('Cost', 'cost')}
+                  {sortColumn('Created', 'created')}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((e) => (
-                  <tr key={e.id} className={compare.includes(e.id) ? 'checked-row' : ''}>
+                {visible.map((e) => (
+                  <tr
+                    key={e.id}
+                    className={baseline === e.id || candidate === e.id ? 'eval-selected-row' : ''}
+                  >
                     <td>
                       <input
                         type="checkbox"
-                        checked={compare.includes(e.id)}
-                        onChange={() => toggle(e.id)}
+                        checked={baseline === e.id || candidate === e.id}
+                        onChange={() => selectForCompare(e.id)}
                         aria-label={`Compare ${e.name}`}
                       />
                     </td>
                     <td>
                       <button className="row-title" onClick={() => setSelected(e.id)}>
-                        <span className="table-icon">
-                          <FlaskConical size={15} />
+                        <span className="eval-resource-icon">
+                          <FlaskConical size={16} />
                         </span>
                         <span>
                           {e.name}
                           <small>
-                            Dataset v{e.datasetVersion} · {e.trials}{' '}
-                            {e.trials === 1 ? 'trial' : 'trials'}
+                            {datasets.data?.find((d) => d.id === e.datasetId)?.name || e.datasetId}{' '}
+                            · v{e.datasetVersion} ·{' '}
+                            {e.executionSource === 'sdk-import'
+                              ? 'SDK'
+                              : e.executionSource === 'synthetic'
+                                ? 'Synthetic'
+                                : e.task.type === 'openai'
+                                  ? e.task.model
+                                  : e.task.type}
                           </small>
                         </span>
                       </button>
+                      {(baseline === e.id || candidate === e.id) && (
+                        <span className="eval-selection-label">
+                          {baseline === e.id ? 'Baseline' : 'Candidate'}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <Status value={e.status} />
@@ -709,14 +1205,18 @@ export function ExperimentsPage({
                       {e.completedCases}/{e.totalCases}
                     </td>
                     <td>
-                      <Score value={meanScore(e.scores)} />
+                      <Score value={scoreMetric ? e.scores[scoreMetric] : averageScore(e.scores)} />
+                      <small className="eval-metric-note">
+                        {scoreMetric
+                          ? 'Selected score'
+                          : `${e.scorerIds.length} ${e.scorerIds.length === 1 ? 'scorer' : 'scorers'}`}
+                      </small>
                     </td>
-                    <td className="muted">{e.scorerIds.length}</td>
                     <td className="tabular">{duration(e.latencyMs)}</td>
                     <td className="tabular">
                       {money(e.costUsd)}
                       {e.unknownCostCount > 0 && (
-                        <small className="muted block">{e.unknownCostCount} unknown</small>
+                        <small className="eval-metric-note">{e.unknownCostCount} unknown</small>
                       )}
                     </td>
                     <td className="muted nowrap">{date(e.createdAt)}</td>
@@ -727,36 +1227,38 @@ export function ExperimentsPage({
           </div>
         ) : (
           <Empty
-            title="Better agents start with a baseline"
-            description="Run an evaluation against a dataset, then compare your next change."
+            title={list.data?.length ? 'No matching experiments' : 'Start with a baseline'}
+            description={
+              list.data?.length
+                ? 'Try a different search, status, or dataset.'
+                : 'Run an evaluation against a dataset, then compare your next change.'
+            }
             action={
-              <Button permission="write" onClick={() => setCreate(true)}>
-                Create an experiment
-              </Button>
+              list.data?.length ? (
+                <Button
+                  onClick={() => {
+                    setSearch('');
+                    setStatus('');
+                    setDataset('');
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : (
+                <Button permission="write" onClick={() => setCreate(true)}>
+                  Create an experiment
+                </Button>
+              )
             }
           />
         )}
+        <EvalPagination
+          page={currentPage}
+          count={filtered.length}
+          total={list.data?.length}
+          onPage={setPage}
+        />
       </div>
-      {compare.length > 0 && (
-        <div className="comparison-bar">
-          <div>
-            <GitCompareArrows size={17} />
-            <strong>{compare.length} of 2 selected</strong>
-            <span>First selection is the baseline.</span>
-          </div>
-          <Button variant="ghost" onClick={() => setCompare([])}>
-            Clear
-          </Button>
-          <Button
-            variant="primary"
-            disabled={compare.length !== 2}
-            onClick={() => setComparing(true)}
-          >
-            Compare experiments
-            <ArrowRight size={14} />
-          </Button>
-        </div>
-      )}
       {create && (
         <CreateExperiment
           onClose={() => setCreate(false)}
@@ -766,22 +1268,24 @@ export function ExperimentsPage({
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 function CreateExperiment({
   onClose,
   onCreated,
+  initialDatasetId = '',
 }: {
   onClose: () => void;
   onCreated: (e: Experiment) => void;
+  initialDatasetId?: string;
 }) {
   const { projectId, refresh, refreshAll, notify } = useWorkspace();
   const datasets = useData<Dataset[]>(`/datasets?${qs({ projectId })}`, refresh);
   const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
   const info = useData<ServerInfo>('/info');
   const [name, setName] = useState('');
-  const [datasetId, setDatasetId] = useState('');
+  const [datasetId, setDatasetId] = useState(initialDatasetId);
   const [ids, setIds] = useState<string[]>([]);
   const [type, setType] = useState<TaskConfig['type']>('template');
   const [template, setTemplate] = useState('{{input}}');
@@ -931,11 +1435,24 @@ function CreateExperiment({
     </Modal>
   );
 }
-function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
+function ExperimentView({
+  id,
+  onBack,
+  backLabel = 'All experiments',
+}: {
+  id: string;
+  onBack: () => void;
+  backLabel?: string;
+}) {
   const { refresh, refreshAll, notify } = useWorkspace();
   const detail = useData<ExperimentDetail>(`/experiments/${encodeURIComponent(id)}`, refresh);
   const [selected, setSelected] = useState<EvalCase | null>(null);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    setPage(0);
+  }, [filter, search]);
   const [traceId, setTraceId] = useState<string | null>(null);
   const action = useAction();
   const e = detail.data?.experiment;
@@ -951,14 +1468,20 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
       return () => clearInterval(timer);
     }
   }, [running, detail.reload]);
-  const rows = detail.data?.cases.filter((c) =>
-    filter === 'all' || filter === 'errors'
-      ? filter === 'all' || !!c.error
-      : Object.values(c.scores).some((v) => v != null && v < 1),
+  const filtered = (detail.data?.cases ?? []).filter(
+    (c) =>
+      matchesEvaluationSearch([c.input, c.output, c.expected, c.error, c.rowId], search) &&
+      (filter === 'all' || filter === 'errors'
+        ? filter === 'all' || !!c.error
+        : filter === 'score-errors'
+          ? Object.keys(c.scoreErrors).length > 0
+          : Object.values(c.scores).some((v) => v != null && v < 1)),
   );
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
+  const rows = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
   return (
-    <>
-      <Back onClick={onBack}>All experiments</Back>
+    <div className="eval-console">
+      <Back onClick={onBack}>{backLabel}</Back>
       <PageHeader
         title={e?.name || 'Experiment'}
         description={
@@ -1044,10 +1567,18 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
                 }
               />
             </div>
-            <div className="panel">
+            <div className="panel eval-table-panel">
               <div className="filter-bar">
-                <strong>Evaluation cases</strong>
-                <span className="count-label">{rows?.length || 0} results</span>
+                <div className="search-box">
+                  <Search size={15} />
+                  <input
+                    aria-label="Search evaluation cases"
+                    placeholder="Search inputs, outputs, or errors…"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </div>
+                <span className="count-label">{filtered.length} results</span>
                 <div className="filter-spacer" />
                 <select
                   value={filter}
@@ -1057,6 +1588,7 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
                   <option value="all">All cases</option>
                   <option value="failures">Scores below 100%</option>
                   <option value="errors">Execution errors</option>
+                  <option value="score-errors">Scorer errors</option>
                 </select>
               </div>
               {rows?.length ? (
@@ -1111,6 +1643,12 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
                   }
                 />
               )}
+              <EvalPagination
+                page={currentPage}
+                count={filtered.length}
+                total={detail.data?.cases.length}
+                onPage={setPage}
+              />
             </div>
           </>
         )
@@ -1126,7 +1664,7 @@ function ExperimentView({ id, onBack }: { id: string; onBack: () => void }) {
         />
       )}{' '}
       {traceId && <TraceDrawer id={traceId} onClose={() => setTraceId(null)} />}
-    </>
+    </div>
   );
 }
 function CaseDrawer({
@@ -1210,141 +1748,400 @@ function CompareView({
   onBack: () => void;
 }) {
   const { refresh, projectId } = useWorkspace();
-  const result = useData<Comparison>(`/compare?${qs({ baseline, candidate })}`, refresh);
-  const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
-  const [selected, setSelected] = useState<ComparisonRow | null>(null);
   const [swapped, setSwapped] = useState(false);
-  const reverse = useData<Comparison>(
-    swapped ? `/compare?${qs({ baseline: candidate, candidate: baseline })}` : null,
+  const result = useData<Comparison>(
+    `/compare?${qs({ baseline: swapped ? candidate : baseline, candidate: swapped ? baseline : candidate })}`,
     refresh,
   );
-  const data = swapped ? reverse.data : result.data;
-  const loading = swapped ? reverse.loading : result.loading;
-  const error = swapped ? reverse.error : result.error;
+  const scorers = useData<Scorer[]>(`/scorers?${qs({ projectId })}`, refresh);
+  const [selected, setSelected] = useState<ComparisonRow | null>(null);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<ComparisonChange | 'all'>('all');
+  const [metric, setMetric] = useState('');
+  const [page, setPage] = useState(0);
+  const [traceId, setTraceId] = useState<string | null>(null);
+  const data = result.data;
+  const scoreName = (id: string) => scorers.data?.find((scorer) => scorer.id === id)?.name || id;
+  const counts = { regressed: 0, improved: 0, mixed: 0, unchanged: 0, unscored: 0, unmatched: 0 };
+  for (const row of data?.rows ?? []) counts[comparisonChange(row, metric)]++;
+  const filtered = (data?.rows ?? []).filter(
+    (row) =>
+      (filter === 'all' || comparisonChange(row, metric) === filter) &&
+      matchesEvaluationSearch(
+        [
+          row.rowId,
+          row.input,
+          row.baseline?.input,
+          row.candidate?.input,
+          row.baseline?.output,
+          row.candidate?.output,
+          row.baseline?.error,
+          row.candidate?.error,
+        ],
+        search,
+      ),
+  );
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
+  const visible = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
+  const scoreIds = metric ? [metric] : Object.keys(data?.deltas ?? {});
+  useEffect(() => {
+    setPage(0);
+  }, [search, filter, metric, swapped]);
+  const filterNames: Record<ComparisonChange | 'all', string> = {
+    all: 'All cases',
+    regressed: 'Regressions',
+    improved: 'Improvements',
+    mixed: 'Mixed changes',
+    unchanged: 'Unchanged',
+    unscored: 'No paired score',
+    unmatched: 'Unmatched',
+  };
   return (
-    <>
+    <div className="eval-console">
       <Back onClick={onBack}>All experiments</Back>
       <PageHeader
-        eyebrow="MEASURE THE DIFFERENCE"
         title="Compare experiments"
-        description="Cases aligned by dataset row and trial. Positive score changes are improvements."
+        description="Inspect the change from baseline to candidate, one case at a time."
         actions={
-          <Button onClick={() => setSwapped((v) => !v)}>
+          <Button
+            onClick={() => {
+              setSwapped((value) => !value);
+              setSelected(null);
+            }}
+          >
             <ArrowLeftRight size={15} />
             Swap baseline
           </Button>
         }
       />
-      <ErrorBox message={error} />
-      {loading && !data ? (
+      <ErrorBox message={result.error || scorers.error} />
+      {result.loading ? (
         <Loading />
       ) : (
         data && (
           <>
-            {data.warning && <div className="warning-banner">{data.warning}</div>}
-            <div className="compare-heading">
-              <div>
-                <span className="eyebrow">BASELINE</span>
-                <h2>{data.baseline.name}</h2>
-                <Badge>Dataset v{data.baseline.datasetVersion}</Badge>
+            {data.warning && (
+              <div className="warning-banner eval-provenance-warning">
+                <Filter size={16} />
+                <div>
+                  <strong>Check comparison coverage</strong>
+                  <p>{data.warning}</p>
+                </div>
               </div>
-              <ArrowRight size={24} />
-              <div>
-                <span className="eyebrow">CANDIDATE</span>
-                <h2>{data.candidate.name}</h2>
-                <Badge>Dataset v{data.candidate.datasetVersion}</Badge>
-              </div>
-            </div>
-            <div className="experiment-stats">
-              {Object.entries(data.deltas).map(([id, delta]) => (
-                <Stat
-                  key={id}
-                  label={scorers.data?.find((s) => s.id === id)?.name || id}
-                  value={<Score value={delta} delta />}
-                  detail={
-                    data.comparable ? 'Mean score change' : 'Coverage differs — compare with care'
-                  }
-                />
+            )}
+            <div className="eval-run-pair">
+              {[data.baseline, data.candidate].map((experiment, i) => (
+                <div className="eval-run-card" key={experiment.id}>
+                  <div className="eval-run-card-heading">
+                    <span className={`eval-run-role ${i ? 'candidate' : ''}`}>
+                      {i ? 'CANDIDATE' : 'BASELINE'}
+                    </span>
+                    <Status value={experiment.status} />
+                  </div>
+                  <h2>{experiment.name}</h2>
+                  <div className="eval-run-provenance">
+                    <Database size={13} />
+                    <code>{experiment.datasetId}</code>
+                    <Badge>v{experiment.datasetVersion}</Badge>
+                    <span>
+                      {experiment.executionSource === 'sdk-import'
+                        ? 'SDK import'
+                        : experiment.executionSource === 'synthetic'
+                          ? 'Synthetic'
+                          : 'Server run'}
+                    </span>
+                  </div>
+                  <div className="eval-run-metrics">
+                    <span>
+                      <strong>{experiment.completedCases.toLocaleString()}</strong> completed cases
+                    </span>
+                    <span>
+                      <strong>{duration(experiment.latencyMs)}</strong> avg. latency
+                    </span>
+                    <span>
+                      <strong>{money(experiment.costUsd)}</strong> recorded cost
+                      {experiment.unknownCostCount
+                        ? ` · ${experiment.unknownCostCount} unknown`
+                        : ''}
+                    </span>
+                  </div>
+                </div>
               ))}
             </div>
-            <Section
-              title="Case-by-case comparison"
-              detail="Open a row to inspect both outputs and exact scores."
-            >
-              <div className="table-wrap">
-                <table className="comparison-table">
-                  <thead>
-                    <tr>
-                      <th>Input</th>
-                      <th>Baseline output</th>
-                      <th>Candidate output</th>
-                      {Object.keys(data.deltas).map((id) => (
-                        <th key={id}>Δ {scorers.data?.find((s) => s.id === id)?.name || id}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.rows.map((r, i) => (
-                      <tr key={`${r.rowId}-${r.trial}-${i}`}>
-                        <td>
-                          <button className="cell-json" onClick={() => setSelected(r)}>
-                            {compact(r.input)}
-                          </button>
-                          <small className="row-id">Trial {r.trial}</small>
-                        </td>
-                        <td>
-                          <span className="cell-json">
-                            {r.baseline ? compact(r.baseline.output) : 'Unmatched'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="cell-json">
-                            {r.candidate ? compact(r.candidate.output) : 'Unmatched'}
-                          </span>
-                        </td>
-                        {Object.keys(data.deltas).map((id) => (
-                          <td key={id}>
-                            <Score value={r.deltas[id]} delta />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="eval-coverage-strip">
+              <span>
+                <span
+                  className={`status-dot ${data.comparable ? 'eval-positive' : 'eval-warning'}`}
+                />
+                <strong>
+                  {data.rows.length - counts.unmatched} / {data.rows.length}
+                </strong>{' '}
+                cases paired by row and trial
+              </span>
+              <span>
+                {data.comparable
+                  ? 'Same dataset revision and aligned cases'
+                  : 'Aggregate score deltas withheld: comparison is not aligned'}
+              </span>
+            </div>
+            <div className="eval-score-cards">
+              {Object.entries(data.deltas).map(([id, delta]) => (
+                <button
+                  key={id}
+                  className={`eval-score-card ${metric === id ? 'active' : ''}`}
+                  onClick={() => setMetric(metric === id ? '' : id)}
+                  aria-pressed={metric === id}
+                >
+                  <div>
+                    <span>{scoreName(id)}</span>
+                    <ArrowRight size={13} />
+                  </div>
+                  <strong>
+                    <Score value={delta} delta />
+                  </strong>
+                  <small>
+                    <Score value={data.baseline.scores[id]} />
+                    <ArrowRight size={11} />
+                    <Score value={data.candidate.scores[id]} />
+                  </small>
+                  <span className="eval-metric-note">
+                    {data.comparable ? 'Mean score change' : 'Unaligned comparison'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="panel eval-table-panel">
+              <div className="filter-bar">
+                <div className="search-box">
+                  <Search size={15} />
+                  <input
+                    aria-label="Search comparison cases"
+                    placeholder="Search inputs, outputs, or errors…"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </div>
+                <select
+                  aria-label="Comparison score"
+                  value={metric}
+                  onChange={(event) => setMetric(event.target.value)}
+                >
+                  <option value="">All scores</option>
+                  {Object.keys(data.deltas).map((id) => (
+                    <option key={id} value={id}>
+                      {scoreName(id)}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </Section>
+              <div className="eval-result-filters" aria-label="Comparison result filters">
+                {(
+                  [
+                    'all',
+                    'regressed',
+                    'improved',
+                    'mixed',
+                    'unchanged',
+                    'unscored',
+                    'unmatched',
+                  ] as const
+                ).map((value) => (
+                  <button
+                    key={value}
+                    className={filter === value ? 'active' : ''}
+                    onClick={() => setFilter(value)}
+                    aria-pressed={filter === value}
+                  >
+                    <span className={`eval-change-dot ${value}`} />
+                    {filterNames[value]}
+                    <strong>{value === 'all' ? data.rows.length : counts[value]}</strong>
+                  </button>
+                ))}
+              </div>
+              {visible.length ? (
+                <div className="table-wrap">
+                  <table className="eval-comparison-table">
+                    <thead>
+                      <tr>
+                        <th>Change</th>
+                        <th>Input</th>
+                        <th>Baseline output</th>
+                        <th>Candidate output</th>
+                        {scoreIds.map((id) => (
+                          <th key={id}>Δ {scoreName(id)}</th>
+                        ))}
+                        <th aria-label="Open comparison" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map((row) => (
+                        <tr key={`${row.rowId}:${row.trial}`}>
+                          <td>
+                            <span className={`eval-change-label ${comparisonChange(row, metric)}`}>
+                              {filterNames[comparisonChange(row, metric)]}
+                            </span>
+                          </td>
+                          <td>
+                            <button className="cell-json" onClick={() => setSelected(row)}>
+                              {compact(row.input)}
+                            </button>
+                            <small className="row-id">
+                              Trial {row.trial} · {row.rowId}
+                            </small>
+                          </td>
+                          <td>
+                            <span
+                              className={`cell-json ${row.baseline?.error ? 'error-text' : ''}`}
+                            >
+                              {row.baseline
+                                ? row.baseline.error || compact(row.baseline.output)
+                                : 'Unmatched'}
+                            </span>
+                          </td>
+                          <td>
+                            <span
+                              className={`cell-json ${row.candidate?.error ? 'error-text' : ''}`}
+                            >
+                              {row.candidate
+                                ? row.candidate.error || compact(row.candidate.output)
+                                : 'Unmatched'}
+                            </span>
+                          </td>
+                          {scoreIds.map((id) => (
+                            <td key={id}>
+                              <Score value={row.deltas[id]} delta />
+                            </td>
+                          ))}
+                          <td>
+                            <button
+                              className="icon-button"
+                              aria-label={`Compare outputs for ${row.rowId}, trial ${row.trial}`}
+                              onClick={() => setSelected(row)}
+                            >
+                              <Eye size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <Empty
+                  title="No cases match these filters"
+                  description="Choose another score or result category to continue your review."
+                  action={
+                    <Button
+                      onClick={() => {
+                        setFilter('all');
+                        setSearch('');
+                        setMetric('');
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  }
+                />
+              )}
+              <EvalPagination
+                page={currentPage}
+                count={filtered.length}
+                total={data.rows.length}
+                onPage={setPage}
+              />
+            </div>
+            <p className="eval-footnote">
+              Score changes are candidate minus baseline. Mixed changes mean some scores rose while
+              others fell. Rows without paired scores are never counted as improvements or
+              regressions.
+            </p>
           </>
         )
       )}
-      {selected && (
+      {selected && data && (
         <Modal
           title="Compare outputs"
           description={`Row ${selected.rowId} · trial ${selected.trial}`}
           onClose={() => setSelected(null)}
           wide
         >
-          <JsonBlock label="Input" value={selected.input} />
-          <div className="form-columns">
-            <div>
-              <JsonBlock label="Baseline output" value={selected.baseline?.output ?? 'Unmatched'} />
-              <JsonBlock label="Baseline scores" value={selected.baseline?.scores ?? {}} />
-            </div>
-            <div>
-              <JsonBlock
-                label="Candidate output"
-                value={selected.candidate?.output ?? 'Unmatched'}
-              />
-              <JsonBlock label="Candidate scores" value={selected.candidate?.scores ?? {}} />
-            </div>
+          <div className="eval-output-comparison">
+            {[selected.baseline, selected.candidate].map((row, i) => (
+              <div className="eval-output-column" key={i}>
+                <div className="eval-output-heading">
+                  <span className={`eval-run-role ${i ? 'candidate' : ''}`}>
+                    {i ? 'CANDIDATE' : 'BASELINE'}
+                  </span>
+                  <h3>{i ? data.candidate.name : data.baseline.name}</h3>
+                  {row && (
+                    <div className="eval-output-meta">
+                      <span>{duration(row.latencyMs)}</span>
+                      <span>{money(row.costUsd)}</span>
+                      {row.traceId && (
+                        <Button
+                          onClick={() => {
+                            setTraceId(row.traceId);
+                            setSelected(null);
+                          }}
+                        >
+                          Open trace
+                          <ArrowRight size={12} />
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {row ? (
+                  <>
+                    <ErrorBox message={row.error || ''} />
+                    <JsonBlock label="Input" value={row.input} />
+                    <JsonBlock label="Expected (recorded)" value={row.expected} />
+                    <JsonBlock label="Output" value={row.output} />
+                    {Object.keys(row.scoreErrors).length > 0 && (
+                      <JsonBlock label="Scorer errors" value={row.scoreErrors} />
+                    )}
+                  </>
+                ) : (
+                  <div className="eval-no-ground-truth">
+                    <strong>No matching case</strong>
+                    <p>This run did not record the same dataset row and trial.</p>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
-          <JsonBlock label="Score changes" value={selected.deltas} />
+          <div className="table-wrap eval-modal-score-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Score</th>
+                  <th>Baseline</th>
+                  <th>Candidate</th>
+                  <th>Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(selected.deltas).map((id) => (
+                  <tr key={id}>
+                    <td>{scoreName(id)}</td>
+                    <td>
+                      <Score value={selected.baseline?.scores[id]} />
+                    </td>
+                    <td>
+                      <Score value={selected.candidate?.scores[id]} />
+                    </td>
+                    <td>
+                      <Score value={selected.deltas[id]} delta />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {data.warning && <div className="warning-banner">{data.warning}</div>}
         </Modal>
       )}
-    </>
+      {traceId && <TraceDrawer id={traceId} onClose={() => setTraceId(null)} />}
+    </div>
   );
-}
-
-function meanScore(scores: Record<string, number | null>) {
-  const values = Object.values(scores).filter((s): s is number => s !== null);
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
 }

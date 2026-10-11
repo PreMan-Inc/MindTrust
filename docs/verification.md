@@ -35,6 +35,21 @@ For 0.2, verified named administrator and viewer sign-in, sign-out, project visi
 
 Screenshots use synthetic accounts and data: [team access](images/team-access.jpg), [dataset migration](images/dataset-migration.jpg).
 
+## Console workflow update
+
+The revised console was verified on Node.js 24 with **76 passing tests**, strict TypeScript, and a Vite production build. Added tests cover server-wide sorting before pagination, null-last costs, allowlisted sort fields, chronological index usage, offset timestamps, cycle-safe/deep span hierarchies, missing-span dataset sources, ground-truth presence, and comparison categories.
+
+Browser checks used only local synthetic data:
+
+- Command search, keyboard selection, project switching, direct overview-to-experiment navigation, and project selection across reloads.
+- Dataset tag filtering, inline example inspection, immutable snapshot history, explicit baseline/candidate selection, improvement filters, output comparison, and navigation to the underlying trace.
+- Prompt search including no matches, deterministic Playground execution, persisted output, and opening its trace. No paid provider calls.
+- Responsive page widths at 390, 820, and 1024 pixels, with the normal viewport restored afterward. Fixed legacy sidebar/main width rules that caused intermediate-width overflow.
+- Logs: error filtering and sorting, empty search state, leaf-failure navigation, metadata, focused inspection, and 390-pixel mobile inspection. Saved a review and a dataset row in the separate UI verification project and confirmed their persisted history/version; the Atlas sample project was left unchanged.
+- Browser console reported no JavaScript errors during these checks.
+
+The visual comparison informed the original navigation, table, and inspection design. It does not establish complete Braintrust UI parity. Screenshots: [overview](images/mindtrust-overview.jpg), [experiment comparison](images/experiment-comparison.jpg), [trace inspector](images/trace-workbench.jpg).
+
 ## Repeatable local workload
 
 Run `npm run benchmark -- --traces 5000 --out docs/benchmark-local.json`. The saved JSON includes the runtime, hardware, request size, batching, concurrency, full-durability mode, ingestion results, and paginated query timings. This is a native-ingestion workload over loopback HTTP without TLS. It does not measure distributed behavior, production capacity, Braintrust compatibility ingestion performance, or another vendor's service.

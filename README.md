@@ -33,10 +33,10 @@ Then open **http://127.0.0.1:4310**.
 
 ## What works
 
-- **Projects and observability:** persistent projects, searchable traces, status filters, paginated logs, nested span inspection, timing, input/output, metadata, tokens, and explicit unknown costs.
-- **Dataset curation:** create and edit cases, import JSON records, export data, inspect immutable revisions, and turn reviewed traces into cases with explicitly chosen expectations.
+- **Projects and observability:** searchable, server-sorted trace tables with column controls, pagination, optional refresh, and a split inspector. Follow hierarchical span timelines, jump to failures, inspect structured JSON and metadata, and preserve unknown costs.
+- **Dataset curation:** search and filter examples by tag and ground-truth presence, inspect inline, browse immutable version history, import/export JSON, and create cases from reviewed traces with explicitly chosen expectations.
 - **Evaluations:** run echo/template tasks or a configured model provider, pin dataset revisions, snapshot scorer definitions, repeat trials, bound concurrency, inspect failures, cancel runs, and export results.
-- **Experiment comparison:** align cases by row ID and trial, inspect per-case score changes, and warn about incompatible coverage. Missing scores remain missing.
+- **Experiment comparison:** choose an explicit baseline and candidate, filter regressions/improvements/mixed changes per metric, compare outputs side by side, and open underlying traces. Coverage and provenance warnings stay visible; missing scores remain missing.
 - **Scorers:** exact match, containment, and JSON validation with optional field paths. The Node SDK also executes custom scorer functions locally.
 - **Prompts and playground:** version prompt text, render input variables, test deterministic templates, and execute real model calls when a provider is configured.
 - **Review:** save judgments, comments, and expected outputs against traces and evaluation cases. Human review does not rewrite automatic scores.
@@ -44,6 +44,8 @@ Then open **http://127.0.0.1:4310**.
 - **Team access:** named accounts, salted scrypt password hashes, optional OIDC, HttpOnly sessions, CSRF protection, viewer/editor/admin roles, project scopes, expiring/revocable API keys, and audit events.
 - **Braintrust integration:** a versioned compatibility adapter exercised with the official SDK over real HTTP. See the [exact supported workflows and exclusions](docs/braintrust-compatibility.md).
 - **Operations:** SQL-based trace pagination/aggregates, bounded evaluation scheduling, health/readiness probes, protected Prometheus metrics, redacted request logs, single-writer startup protection, and verified online backup/restore.
+
+Use **Cmd/Ctrl+K** to find pages and switch projects. The console includes dense inspection tables, responsive navigation, prompt search, and direct overview-to-trace/experiment navigation. See the [console workflow guide](docs/console-workflows.md).
 
 Everything displayed as sample activity is synthetic. User-created objects use the same persisted API and storage.
 
