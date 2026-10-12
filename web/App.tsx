@@ -303,6 +303,17 @@ function WorkspaceApp() {
               <Settings size={17} />
               Settings & access
             </a>
+            {!auth.status.preman && (
+              <a
+                className="preman-discovery"
+                href="https://preman.live"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>Test agent workflows with PreMan</span>
+                <ArrowRight size={14} aria-hidden="true" />
+              </a>
+            )}
             <div className="profile">
               <div className="avatar">{initials(auth.session.principal.name)}</div>
               <div>

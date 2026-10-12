@@ -603,6 +603,57 @@ test('ingestion does not rewrite unrelated historical traces and cursor reads re
   );
 });
 
+test('a new SDK span coalesced with feedback preserves its scores, audit and comment', async (t) => {
+  const f = await fixture(t);
+  for (const explicitFlag of [false, true]) {
+    const id = explicitFlag ? 'explicit-create' : 'implicit-create';
+    const row = {
+      id,
+      project_id: f.allowed,
+      log_id: 'g',
+      span_id: id,
+      root_span_id: id,
+      span_attributes: { name: id },
+      input: 'synthetic',
+      output: 'answer',
+      scores: { human: 0.75 },
+      _audit_source: 'external',
+      _audit_metadata: { reviewer: 'contract' },
+      ...(explicitFlag ? { _is_merge: false } : {}),
+    };
+    // The Python SDK coalesces a queued creation and feedback into this nonmerge row.
+    const response = await f.request('/logs3', {
+      rows: [
+        row,
+        {
+          id: `${id}-comment`,
+          project_id: f.allowed,
+          log_id: 'g',
+          origin: { id },
+          comment: { text: 'Reviewed before the first flush' },
+          _audit_source: 'external',
+        },
+      ],
+    });
+    assert.equal(response.status, 200, await response.text());
+    const raw = await (await f.request(`/v1/project_logs/${f.allowed}/fetch`)).json();
+    const saved = raw.events.find((r: { id: string }) => r.id === id);
+    assert.equal(saved.scores.human, 0.75);
+    assert.equal(saved._audit_source, 'external');
+    assert.deepEqual(saved._audit_metadata, { reviewer: 'contract' });
+    const trace = f.store.list<Trace>('trace', f.allowed).find((r) => r.name === id)!;
+    assert.equal(trace.output, 'answer');
+    const annotations = f.store.list<{ targetId: string; comment: string }>(
+      'annotation',
+      f.allowed,
+    );
+    assert.equal(
+      annotations.find((r) => r.targetId === trace.id)?.comment,
+      'Reviewed before the first flush',
+    );
+  }
+});
+
 test('raw-only dataset edits are versioned and REST feedback preserves audit records', async (t) => {
   const f = await fixture(t);
   const id = (

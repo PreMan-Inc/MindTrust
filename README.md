@@ -1,18 +1,24 @@
-# MindTrust
+# Verus
 
-**Agent observability and evaluation, by PreMan.**
+**Open-source agent tracing and evaluations for any team, by [PreMan](https://preman.live).**
 
-MindTrust is an application for tracing agents, curating regression datasets, running evaluations, and comparing changes. Version **0.2 is a release candidate for an isolated hosted customer workspace**, with a self-hosted option. It adds team access, optional OIDC sign-in, scoped credentials, compatibility tests against the official Braintrust SDK, and recovery tooling.
+Verus is a standalone application for tracing agents, curating regression datasets, running evaluations, and comparing changes. Run it locally or self-host it for your team with your own accounts, API keys, and optional OIDC. **Standalone Verus does not require a PreMan account.**
+
+Already using Braintrust? Connect supported versions of the existing JavaScript or Python SDK to Verus, then move your workflow using the [compatibility guide](docs/braintrust-compatibility.md) and [migration guide](docs/migration.md). Version **0.2 is a release candidate** with team access, scoped credentials, SDK contract tests, and backup/recovery tooling.
+
+Verus was formerly named MindTrust. The repository name, `MindTrust` SDK class, `MINDTRUST_*` configuration, database filenames, and compatibility links retain their existing names so existing integrations continue to work.
 
 The goal is a lower-cost, faster alternative. **Comparative cost and performance have not yet been established.** A representative customer pilot is required before claiming a production replacement for that team; this release does not claim universal Braintrust parity.
 
-![MindTrust dashboard with clearly labeled synthetic data](docs/images/mindtrust-overview.jpg)
+![Verus dashboard with clearly labeled synthetic data](docs/images/mindtrust-overview.jpg)
 
 ## Run locally
 
-Requires **Node.js 24 or newer**.
+Requires **Git and Node.js 24 or newer**. Clone the repository, then start the local app:
 
 ```sh
+git clone https://github.com/PreMan-Inc/MindTrust.git
+cd MindTrust
 npm ci
 cp .env.example .env
 npm run dev
@@ -51,7 +57,7 @@ Everything displayed as sample activity is synthetic. User-created objects use t
 
 ## Connect an application
 
-Use the repository-local SDK; it is not published to npm yet. Replace the project ID with one created in MindTrust, or use the seeded demo project for exploration.
+Use the repository-local SDK; it is not published to npm yet. The example below runs from the repository root. In another application, point the import at your local SDK copy. Replace the project ID with one created in Verus, or use the seeded demo project for exploration.
 
 ```js
 import { MindTrust } from './sdk/index.mjs';
@@ -90,9 +96,15 @@ This creates a separate synthetic project and dataset, executes six cases, recor
 
 ## Real agent evaluations
 
-MindTrust now includes runnable integrations for **PreMan’s production shared agent loop**, **LangGraph**, **PydanticAI**, and **smolagents**. These execute real model/tool loops against synthetic workspaces, retain nested traces and provider token usage, and score outcomes in the app. Deliberately broken tool results provide regression controls. See [the agent execution guide](docs/agent-evaluations.md), [PreMan run evidence](docs/preman-agent-evals.md), and [public framework run evidence](docs/public-agent-evals.md).
+Verus includes runnable integrations for **LangGraph**, **PydanticAI**, **smolagents**, and **PreMan’s production shared agent loop**. These execute real model/tool loops against synthetic workspaces, retain nested traces and provider token usage, and score outcomes in the app. Deliberately broken tool results provide regression controls. See [the agent execution guide](docs/agent-evaluations.md), [public framework run evidence](docs/public-agent-evals.md), and [PreMan run evidence](docs/preman-agent-evals.md). The PreMan example requires an authorized PreMan backend checkout; the public framework examples do not.
 
 The native SDK supports case/scorer deadlines, cancellation, subprocess termination, imported child spans, and retry-safe result delivery. The existing Braintrust SDK route supports the verified client-side workflows; agent code continues to run in your own environment. This is not a remotely hosted code sandbox or a claim that every Braintrust feature is supported.
+
+## Add PreMan when you need it
+
+[PreMan](https://preman.live) helps you generate and scale tests for agent workflows. You can evaluate their outputs in Verus through its SDK and dataset workflows. The [PreMan agent evaluation example](docs/preman-agent-evals.md) documents the existing runner, setup, and verified scope.
+
+The hosted PreMan integration uses your existing PreMan login and selected workspace. Independent Verus installations use their own local accounts or OIDC unless an operator explicitly enables [PreMan workspace sign-in](docs/preman-shared-login.md).
 
 ## Real model calls
 
@@ -115,15 +127,17 @@ The receiver accepts `resourceSpans` / `scopeSpans`, preserves trace/span IDs an
 
 ## Authentication and deployment
 
-Local development is unauthenticated by default and binds loopback. Set `MINDTRUST_ADMIN_TOKEN` to enable authentication. The sign-in screen provides a bootstrap-token option for creating named administrators and teammates. Daily access uses personal accounts or configured OIDC; applications use scoped, expiring keys. Team administration and audit history live in **Settings & access**.
+Local development is unauthenticated by default and binds loopback. Set `MINDTRUST_ADMIN_TOKEN` to enable authentication. Select **Initial setup or developer token** on the sign-in screen, enter that token, and create a named administrator under **Settings → Team**. Daily access uses local accounts or your configured OIDC provider; applications use scoped, expiring keys. Team administration and audit history live in **Settings & access**. PreMan sign-in is optional and disabled by default.
 
 Production mode requires a bootstrap secret of at least 32 characters and exact HTTPS `MINDTRUST_ALLOWED_ORIGINS`. It enables Secure session cookies and disables new demo seeding in the entry point. The supplied hosted topology uses Caddy for TLS and a private application network, with a separate service/volume/secrets per customer.
 
-A Dockerfile and Compose configurations are included. For a customer deployment, fill an operator-managed environment file from `deploy/production.env.example`, then:
+A Dockerfile and Compose configurations are included. For self-hosting over HTTPS, use `deploy/compose.production.yaml`, which includes Caddy. Fill an operator-managed environment file from `deploy/production.env.example`, then:
 
 ```sh
 docker compose --env-file /secure/customer.env -f deploy/compose.production.yaml -p customer-workspace up --build -d
 ```
+
+The root `compose.yaml` runs the production application behind a loopback HTTP port and requires your own HTTPS reverse proxy with the configured allowed origin. It is not a browser-ready local quickstart; use the Node.js instructions above for local development.
 
 See the [production runbook](docs/production-operations.md) for DNS, TLS, identity provisioning, backups, monitoring, upgrades, and rollback. Each workspace has one writer; do not scale API replicas over a shared SQLite file. Cloud provisioning, offsite backup scheduling, and a live production rollout are operator tasks, not services automatically created by these files.
 
@@ -134,6 +148,12 @@ npm run check
 ```
 
 The suite exercises persistence, snapshots, official SDK contracts, scoped access, session/CSRF security, signed OIDC flows with a mock issuer, recovery, concurrency, and provider/OTLP behavior. CI also builds and smoke-tests the production container. No paid model credentials are needed. See [release evidence](docs/release-0.2.md), [SDK contracts](docs/braintrust-compatibility.md), and the [local synthetic benchmark](docs/benchmark-local.json).
+
+For development setup, focused checks, and contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Verus is available under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for project attribution.
 
 ## Research and design
 

@@ -310,6 +310,24 @@ svg {
   font-weight: 600;
   color: var(--muted);
 }
+.preman-discovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.preman-discovery:hover,
+.preman-discovery:focus-visible {
+  color: var(--accent);
+}
+.preman-discovery svg {
+  flex-shrink: 0;
+}
 .profile {
   display: flex;
   gap: 9px;

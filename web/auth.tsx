@@ -221,7 +221,10 @@ function SignIn({
           </div>
         </div>
         <div className="auth-story-footer">
-          Verus by PreMan <span>Built around your team’s data.</span>
+          <a href="https://preman.live" target="_blank" rel="noopener noreferrer">
+            Verus by PreMan
+          </a>
+          <span>Built around your team’s data.</span>
         </div>
       </div>
       <main className="auth-panel">
@@ -236,7 +239,9 @@ function SignIn({
               ? 'For initial setup and developer access. Regular team members should sign in with their account.'
               : status.preman && !recovery
                 ? 'Use your PreMan account and workspace.'
-                : 'Use your existing workspace recovery account.'}
+                : status.preman
+                  ? 'Use your existing workspace recovery account.'
+                  : 'Sign in with your workspace account.'}
           </p>
           <ErrorBox message={action.error || initialError} />
           {notice && <div className="info-banner">{notice}</div>}

@@ -683,7 +683,13 @@ export function mountBraintrustCompatibility(app: Express, store: Store, access:
       for (const { r, t } of entries) {
         const id = str(r.id, 'id'),
           previous = rowById(t, id);
-        if (r._audit_source !== undefined && r.comment === undefined && !previous)
+        // SDKs can coalesce initial creation and feedback into one nonmerge row.
+        if (
+          r._is_merge === true &&
+          r._audit_source !== undefined &&
+          r.comment === undefined &&
+          !previous
+        )
           throw new HttpError(400, 'Feedback references a missing row');
         if (r._object_delete) {
           if (t.type !== 'dataset') unsupported('deleting trace or experiment rows');
