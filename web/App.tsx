@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { CommandMenu } from './command-menu';
 import { LogsPage, TraceTable, TraceDrawer } from './observability';
 export { TraceDrawer } from './observability';
@@ -87,6 +87,7 @@ function WorkspaceApp() {
   const { canAdmin, canWrite } = usePermissions();
   const signOutAction = useAction();
   const [page, setPage] = useState(() => location.hash.slice(1) || 'overview');
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [refresh, setRefresh] = useState(0);
   const projectPreference = `mindtrust-project-${auth.session.principal.id}-${auth.session.principal.workspaceId}`;
   const [projectId, setProjectId] = useState(() => sessionStorage.getItem(projectPreference) || '');
@@ -101,7 +102,7 @@ function WorkspaceApp() {
   const contentRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0;
-  }, [page, projectId]);
+  }, [page, projectId, navigationRevision]);
   useEffect(() => {
     const shortcut = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -186,7 +187,18 @@ function WorkspaceApp() {
   }, [toast]);
   function navigate(id: string) {
     clearSdkLink();
+    setPage(id);
+    setMobile(false);
+    // Re-entering the current section must leave its nested detail view too.
+    // Assigning the same hash alone does not fire a hashchange event.
+    setNavigationRevision((value) => value + 1);
     location.hash = id;
+  }
+  function navigateFromLink(event: MouseEvent<HTMLAnchorElement>, id: string) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    event.preventDefault();
+    navigate(id);
   }
   function clearSdkLink() {
     setSdkLink({ kind: 'none' });
@@ -284,6 +296,7 @@ function WorkspaceApp() {
                     <a
                       key={id}
                       href={`#${id}`}
+                      onClick={(event) => navigateFromLink(event, id)}
                       className={`nav-link ${page === id ? 'active' : ''}`}
                       aria-current={page === id ? 'page' : undefined}
                     >
@@ -297,6 +310,7 @@ function WorkspaceApp() {
           <div className="sidebar-bottom">
             <a
               href="#settings"
+              onClick={(event) => navigateFromLink(event, 'settings')}
               className={`nav-link ${page === 'settings' ? 'active' : ''}`}
               aria-current={page === 'settings' ? 'page' : undefined}
             >
@@ -375,7 +389,12 @@ function WorkspaceApp() {
                 )}
             </div>
           </div>
-          <main key={projectId} ref={contentRef} className="main-content" data-page={page}>
+          <main
+            key={`${projectId}:${page}:${navigationRevision}`}
+            ref={contentRef}
+            className="main-content"
+            data-page={page}
+          >
             <ErrorBox message={signOutAction.error} />
             {projects.error && <ErrorBox message={projects.error} />}
             {!canWrite && (
