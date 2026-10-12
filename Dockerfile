@@ -16,6 +16,7 @@ ENV NODE_ENV=production MINDTRUST_HOST=0.0.0.0 PORT=4310 MINDTRUST_DB=/app/data/
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && mkdir -p data && chown node:node data
+COPY LICENSE NOTICE ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/shared ./shared

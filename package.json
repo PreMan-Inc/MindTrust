@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Agent observability and evaluations by PreMan",
+  "description": "Standalone agent tracing and evaluations by PreMan",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -40,5 +40,14 @@
     "prettier": "^3.9.10",
     "typescript": "7.0.2",
     "vite": "8.3.4"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PreMan-Inc/MindTrust.git"
+  },
+  "homepage": "https://github.com/PreMan-Inc/MindTrust#readme",
+  "bugs": {
+    "url": "https://github.com/PreMan-Inc/MindTrust/issues"
+  },
+  "license": "Apache-2.0"
 }

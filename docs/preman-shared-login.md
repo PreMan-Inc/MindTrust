@@ -1,12 +1,14 @@
 # PreMan workspace sign-in
 
-Verus uses PreMan's verified identity and selected **workbench workspace** membership. It does not accept a PreMan password, share the PreMan JWT signing secret, link accounts by email, or assign existing data to the first person who signs in. Organizations and workbench workspaces are different PreMan concepts; this integration accepts only `tenant_kind: workbench_workspace`.
+This optional integration lets the hosted PreMan experience use your existing PreMan login and selected **workbench workspace**. Standalone Verus requires no PreMan account: independent installations can use their own local accounts or OIDC, and `MINDTRUST_PREMAN_ENABLED` is disabled by default. See the [standalone setup](../README.md#run-locally) and [authentication and deployment guide](../README.md#authentication-and-deployment).
+
+When enabled, Verus uses PreMan's verified identity and workbench workspace membership. It does not accept a PreMan password, share the PreMan JWT signing secret, link accounts by email, or assign existing data to the first person who signs in. Organizations and workbench workspaces are different PreMan concepts; this integration accepts only `tenant_kind: workbench_workspace`.
 
 ## Enable the integration
 
 Set `MINDTRUST_PREMAN_ENABLED=true` and `MINDTRUST_PREMAN_ISSUER=https://api.preman.live` in the operator-managed environment file. Retain the normal production bootstrap secret and exact `MINDTRUST_ALLOWED_ORIGINS=https://verus.preman.live`. Redemption always uses `https://api.preman.live/auth/verus/redeem`, with certificate verification, no redirects, a five-second deadline, and a 16 KiB response limit. A test transport override cannot run in production.
 
-The standalone console's primary action opens `https://app.preman.live/workbench/verus`. Local password, OIDC, and bootstrap recovery remain available to existing authorized accounts. PreMan identities have no local password and their membership is managed in PreMan. The console omits its own password and logout controls for those identities.
+On a deployment with this integration enabled, the console's primary sign-in action opens `https://app.preman.live/workbench/verus`. Local password, OIDC, and bootstrap recovery remain available to existing authorized accounts. PreMan identities have no local password and their membership is managed in PreMan. The console omits its own password and logout controls for those identities.
 
 With this integration enabled, CSP permits framing only by `https://app.preman.live`. The conflicting `X-Frame-Options: DENY` header is omitted in this mode. All other deployments retain frame denial. Credentialed browser CORS for the PreMan app is limited to `/api/auth/preman/exchange` and `/api/auth/logout`; it does not grant cross-origin access to project data or session reads. The exchange also accepts the Verus origin and native requests without an Origin, but rejects other supplied origins and non-JSON bodies.
 
