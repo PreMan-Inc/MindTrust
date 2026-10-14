@@ -72,6 +72,7 @@ export class MindTrust {
   }): Promise<any>;
   getDataset(id: string, version?: number): Promise<any>;
   insertDatasetRows(id: string, rows: unknown[]): Promise<any>;
+  gate(experimentId: string, options?: GateOptions): Promise<GateResult>;
   annotate(options: {
     targetId: string;
     targetType?: 'trace' | 'case';
@@ -107,6 +108,43 @@ export class MindTrust {
     onCheckpoint?: (payload: Record<string, any>) => void | Promise<void>;
   }): Promise<any>;
 }
+export interface GateOptions {
+  baselineId?: string;
+  /** Floors for mean scores, keyed by scorer name or score key. */
+  minScores?: Record<string, number>;
+  /** Regressed rows tolerated against the baseline; defaults to 0. */
+  maxRegressions?: number;
+}
+export interface GateResult {
+  decision: 'pass' | 'fail' | 'not_comparable' | 'incomplete';
+  reasons: string[];
+  experimentId: string;
+  comparison: {
+    baselineId: string;
+    comparable: boolean;
+    regressions: number;
+    improvements: number;
+    deltas: Record<string, number | null>;
+  } | null;
+}
+/** Only a complete run can pass; a baseline only counts when the runs are comparable. */
+export function gate(
+  options: GateOptions & {
+    baseUrl?: string;
+    apiKey?: string;
+    experimentId: string;
+    timeoutMs?: number;
+  },
+): Promise<GateResult>;
+/** pass → 0, fail → 1, not_comparable and incomplete → 2. The CLI exits 3 when no decision was reached. */
+export const GATE_EXIT_CODES: Record<GateResult['decision'], 0 | 1 | 2>;
+/**
+ * Returns a proxy whose `chat.completions.create` and `responses.create` record
+ * `llm` spans, nested under the current trace. Streams stay open until consumed.
+ */
+export function wrapOpenAI<T extends object>(openai: T, client: MindTrust): T;
+/** Returns a proxy whose `messages.create` records `llm` spans, nested under the current trace. */
+export function wrapAnthropic<T extends object>(anthropic: T, client: MindTrust): T;
 /** Execute trusted local code with bounded I/O and process-group termination on POSIX. Not a security sandbox. */
 export function processTask(options: {
   command: string;

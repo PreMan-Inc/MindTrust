@@ -17,13 +17,38 @@ export const rowSchema = z.object({
   metadata: metaSchema.optional(),
   tags: tags.optional(),
 });
-export const scorerSchema = z.object({
-  projectId: idSchema,
-  name: nameSchema,
-  type: z.enum(['exact_match', 'contains', 'json_valid']),
-  config: metaSchema.optional(),
-  description: z.string().max(10000).optional(),
-});
+const judgeConfigSchema = z
+  .object({
+    model: z.string().trim().min(1).max(200),
+    prompt: z
+      .string()
+      .min(1)
+      .max(20000)
+      .refine((p) => /\{\{\s*output\s*\}\}/.test(p), 'prompt must reference {{output}}'),
+    choices: z
+      .record(z.string().trim().min(1).max(100), z.number().finite().min(0).max(1))
+      .refine((c) => Object.keys(c).length >= 2 && Object.keys(c).length <= 20, {
+        message: 'choices needs 2 to 20 labels',
+      }),
+    maxTokens: z.number().int().min(1).max(1024).optional(),
+    maxTokensPerRun: z.number().int().min(1).max(50_000_000).optional(),
+  })
+  .passthrough();
+export const scorerSchema = z
+  .object({
+    projectId: idSchema,
+    name: nameSchema,
+    type: z.enum(['exact_match', 'contains', 'json_valid', 'llm_judge']),
+    config: metaSchema.optional(),
+    description: z.string().max(10000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.type !== 'llm_judge') return;
+    const result = judgeConfigSchema.safeParse(value.config ?? {});
+    if (!result.success)
+      for (const issue of result.error.issues)
+        ctx.addIssue({ code: 'custom', message: issue.message, path: ['config', ...issue.path] });
+  });
 export const taskSchema = z
   .object({
     type: z.enum(['echo', 'template', 'openai']),
