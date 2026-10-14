@@ -1666,6 +1666,9 @@ function CaseDrawer({
       <JsonBlock label="Expected" value={row.expected} />
       <JsonBlock label="Output" value={row.output} />
       <JsonBlock label="Scores" value={row.scores} />
+      {Object.keys(row.scoreExplanations ?? {}).length > 0 && (
+        <JsonBlock label="Judge reasons" value={row.scoreExplanations!} />
+      )}
       {Object.keys(row.scoreErrors).length > 0 && (
         <JsonBlock label="Scorer errors" value={row.scoreErrors} />
       )}
@@ -2071,6 +2074,9 @@ function CompareView({
                     <JsonBlock label="Input" value={row.input} />
                     <JsonBlock label="Expected (recorded)" value={row.expected} />
                     <JsonBlock label="Output" value={row.output} />
+                    {Object.keys(row.scoreExplanations ?? {}).length > 0 && (
+                      <JsonBlock label="Judge reasons" value={row.scoreExplanations!} />
+                    )}
                     {Object.keys(row.scoreErrors).length > 0 && (
                       <JsonBlock label="Scorer errors" value={row.scoreErrors} />
                     )}

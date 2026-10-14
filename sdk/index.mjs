@@ -3,6 +3,39 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { attachedSpans, bounded, duration } from './runtime.mjs';
 export { processTask } from './runtime.mjs';
+export { wrapAnthropic, wrapOpenAI } from './wrappers.mjs';
+
+/** Exit code for each gate decision; 3 is reserved for errors reaching a decision. */
+export const GATE_EXIT_CODES = { pass: 0, fail: 1, not_comparable: 2, incomplete: 2 };
+
+/** Ask the server whether an experiment may ship. Only complete, comparable runs can pass. */
+export async function gate({
+  baseUrl = 'http://127.0.0.1:4310',
+  apiKey,
+  experimentId,
+  baselineId,
+  minScores = {},
+  maxRegressions = 0,
+  timeoutMs = 30_000,
+}) {
+  if (!experimentId) throw new Error('experimentId is required');
+  const query = new URLSearchParams();
+  if (baselineId) query.set('baseline', baselineId);
+  query.set('maxRegressions', String(maxRegressions));
+  for (const [name, floor] of Object.entries(minScores))
+    query.append('minScore', `${name}:${floor}`);
+  const response = await fetch(
+    `${baseUrl.replace(/\/$/, '')}/api/experiments/${encodeURIComponent(experimentId)}/gate?${query}`,
+    {
+      headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+  );
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(`MindTrust ${response.status}: ${result.error || response.statusText}`);
+  return result;
+}
 
 const json = (value) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
 const message = (error) => (error instanceof Error ? error.message : String(error));
@@ -221,6 +254,16 @@ export class MindTrust {
 
   insertDatasetRows(id, rows) {
     return this.request(`/datasets/${encodeURIComponent(id)}/rows`, { rows });
+  }
+
+  gate(experimentId, options = {}) {
+    return gate({
+      ...options,
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      experimentId,
+      timeoutMs: this.timeoutMs,
+    });
   }
 
   annotate({ targetId, targetType = 'trace', label, comment = '', expected = null }) {

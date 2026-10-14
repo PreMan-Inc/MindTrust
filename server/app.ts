@@ -7,7 +7,6 @@ import { z } from 'zod';
 import type {
   Annotation,
   Comparison,
-  ComparisonRow,
   Dataset,
   DatasetRow,
   EvalCase,
@@ -27,6 +26,7 @@ import {
   stableJson,
   taskTrace,
 } from './evaluation.ts';
+import { compareExperiments, gateExperiment } from './comparison.ts';
 import { seedDemo } from './seed-data.ts';
 import { HttpError, Store } from './store.ts';
 import { AccessController } from './auth.ts';
@@ -275,6 +275,8 @@ export function createApp(options: AppOptions = {}) {
         access.principal(req);
         return next();
       }
+      if (/^\/api\/experiments\/[^/]+\/gate$/.test(path) && req.query.baseline !== undefined)
+        access.requireResource(req, 'experiment', parse(idSchema, req.query.baseline), 'read');
       if (path === '/api/compare') {
         access.requireResource(req, 'experiment', parse(idSchema, req.query.baseline), 'read');
         access.requireResource(req, 'experiment', parse(idSchema, req.query.candidate), 'read');
@@ -595,6 +597,11 @@ export function createApp(options: AppOptions = {}) {
     const scorers = body.scorerIds.map((id) =>
       requiredProjectResource<Scorer>(store, 'scorer', id, body.projectId),
     );
+    if (scorers.some((s) => s.type === 'llm_judge') && !provider.apiKey)
+      throw new HttpError(
+        503,
+        'Model judge scorers need a model provider. Set OPENAI_API_KEY on the server.',
+      );
     const experiment: Experiment = {
       id: randomUUID(),
       projectId: body.projectId,
@@ -770,89 +777,34 @@ export function createApp(options: AppOptions = {}) {
     res.json(queue.cancel(parameter(req, 'id'))),
   );
   app.get('/api/compare', (req, res) => {
-    const baseline = store.require<Experiment>('experiment', parse(idSchema, req.query.baseline)),
-      candidate = store.require<Experiment>('experiment', parse(idSchema, req.query.candidate));
-    if (baseline.projectId !== candidate.projectId)
-      throw new HttpError(400, 'Experiments must belong to the same project');
-    const b = store.list<EvalCase>('case', undefined, baseline.id),
-      c = store.list<EvalCase>('case', undefined, candidate.id),
-      bm = new Map(b.map((v) => [JSON.stringify([v.rowId, v.trial]), v])),
-      cm = new Map(c.map((v) => [JSON.stringify([v.rowId, v.trial]), v]));
-    const scoreIds = [
-      ...new Set([...Object.keys(baseline.scores), ...Object.keys(candidate.scores)]),
-    ];
-    const deltasFor = (
-      a: Record<string, number | null> | undefined,
-      z: Record<string, number | null> | undefined,
-    ) =>
-      Object.fromEntries(
-        scoreIds.map((id) => [
-          id,
-          typeof a?.[id] === 'number' && typeof z?.[id] === 'number' ? z[id]! - a[id]! : null,
-        ]),
-      );
-    const rows: ComparisonRow[] = [...new Set([...bm.keys(), ...cm.keys()])].map((key) => {
-      const baseline = bm.get(key) ?? null,
-        candidate = cm.get(key) ?? null,
-        v = baseline ?? candidate!;
-      return {
-        rowId: v.rowId,
-        trial: v.trial,
-        input: v.input,
-        baseline,
-        candidate,
-        deltas: deltasFor(baseline?.scores, candidate?.scores),
-      };
-    });
-    const sameRevision =
-      baseline.datasetId === candidate.datasetId &&
-      baseline.datasetVersion === candidate.datasetVersion;
-    const fullyAligned = rows.every((r) => r.baseline && r.candidate);
-    const sameContents = rows.every(
-      (r) =>
-        !r.baseline ||
-        !r.candidate ||
-        (stableJson(r.baseline.input) === stableJson(r.candidate.input) &&
-          stableJson(r.baseline.expected) === stableJson(r.candidate.expected)),
+    const { warnings: _, ...result } = compareExperiments(
+      store,
+      parse(idSchema, req.query.baseline),
+      parse(idSchema, req.query.candidate),
     );
-    const finished = [baseline, candidate].every((e) => e.status === 'completed');
-    const bs = store.experimentSnapshot(baseline.id).scorers,
-      cs = store.experimentSnapshot(candidate.id).scorers;
-    const changedScorers = bs.some((s) => {
-      const candidateScorer = cs.find((c) => c.id === s.id);
-      return (
-        candidateScorer &&
-        (candidateScorer.type !== s.type ||
-          stableJson(candidateScorer.config) !== stableJson(s.config))
-      );
-    });
-    const unverifiedScorers = scoreIds.some(
-      (id) => !bs.some((s) => s.id === id) || !cs.some((s) => s.id === id),
+    res.json(result satisfies Comparison);
+  });
+  app.get('/api/experiments/:id/gate', (req, res) => {
+    const list = (value: unknown) =>
+      value === undefined ? [] : Array.isArray(value) ? value : [value];
+    const minScores: Record<string, number> = {};
+    for (const raw of list(req.query.minScore)) {
+      const text = String(raw),
+        at = text.lastIndexOf(':'),
+        floorText = text.slice(at + 1).trim(),
+        floor = Number(floorText);
+      if (at < 1 || !floorText || !Number.isFinite(floor) || floor < 0 || floor > 1)
+        throw new HttpError(400, 'minScore must be name:number with a number from 0 to 1');
+      minScores[text.slice(0, at)] = floor;
+    }
+    res.json(
+      gateExperiment(store, parameter(req, 'id'), {
+        baselineId:
+          req.query.baseline === undefined ? undefined : parse(idSchema, req.query.baseline),
+        maxRegressions: positiveQuery(req.query.maxRegressions, 0),
+        minScores,
+      }),
     );
-    const comparable = sameRevision && fullyAligned && sameContents && finished && !changedScorers;
-    const warnings = [
-      !sameRevision
-        ? 'Experiments use different dataset revisions; matched IDs do not establish equivalent inputs.'
-        : null,
-      !fullyAligned ? 'Some rows or trials are unmatched.' : null,
-      !sameContents ? 'Matched row IDs have different input or expected content.' : null,
-      !finished ? 'One or both experiments are not completed.' : null,
-      changedScorers ? 'Scorer definitions changed between experiments.' : null,
-      unverifiedScorers
-        ? 'Some scores do not have matching server-side scorer snapshots; verify their external implementation before interpreting deltas.'
-        : null,
-    ].filter(Boolean);
-    const result: Comparison = {
-      baseline,
-      candidate,
-      rows,
-      deltas: comparable
-        ? deltasFor(baseline.scores, candidate.scores)
-        : Object.fromEntries(scoreIds.map((id) => [id, null])),
-      comparable,
-      warning: warnings.length ? warnings.join(' ') : null,
-    };
-    res.json(result);
   });
 
   app.get('/api/prompts', (req, res) =>

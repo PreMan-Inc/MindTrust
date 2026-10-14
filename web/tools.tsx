@@ -494,7 +494,14 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
   const [type, setType] = useState<Scorer['type']>('exact_match');
   const [outputPath, setOutputPath] = useState('');
   const [expectedPath, setExpectedPath] = useState('');
+  const [model, setModel] = useState('gpt-4.1-mini');
+  const [prompt, setPrompt] = useState(
+    'Question:\n{{input}}\n\nExpected answer:\n{{expected}}\n\nSubmitted answer:\n{{output}}\n\nIs the submitted answer correct?',
+  );
+  const [choices, setChoices] = useState('correct=1\npartially_correct=0.5\nincorrect=0');
+  const [maxTokensPerRun, setMaxTokensPerRun] = useState('100000');
   const action = useAction();
+  const judge = type === 'llm_judge';
   return (
     <Modal title="Create scorer" onClose={onClose}>
       <Form
@@ -507,7 +514,15 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
               type,
               config: {
                 ...(outputPath ? { outputPath } : {}),
-                ...(expectedPath ? { expectedPath } : {}),
+                ...(expectedPath && !judge ? { expectedPath } : {}),
+                ...(judge
+                  ? {
+                      model,
+                      prompt,
+                      choices: parseChoices(choices),
+                      maxTokensPerRun: Number(maxTokensPerRun),
+                    }
+                  : {}),
               },
             });
             refreshAll();
@@ -530,8 +545,47 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
             <option value="exact_match">Exact match · output equals expected</option>
             <option value="contains">Contains · output includes expected text</option>
             <option value="json_valid">Valid JSON · output is valid JSON</option>
+            <option value="llm_judge">Model judge · a model grades the output</option>
           </select>
         </Field>
+        {judge && (
+          <>
+            <Field label="Judge model" hint="Called through the server's configured provider.">
+              <input required value={model} onChange={(e) => setModel(e.target.value)} />
+            </Field>
+            <Field
+              label="Grading prompt"
+              hint="Use {{input}}, {{output}} and {{expected}}. {{output}} is required."
+            >
+              <textarea
+                required
+                rows={7}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+              />
+            </Field>
+            <Field label="Labels and scores" hint="One label=score per line; scores from 0 to 1.">
+              <textarea
+                required
+                rows={3}
+                value={choices}
+                onChange={(e) => setChoices(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Judge token budget per run"
+              hint="Cases beyond the budget are reported as scorer errors, never as passes."
+            >
+              <input
+                required
+                type="number"
+                min={1}
+                value={maxTokensPerRun}
+                onChange={(e) => setMaxTokensPerRun(e.target.value)}
+              />
+            </Field>
+          </>
+        )}
         <Field label="Description">
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
@@ -544,7 +598,7 @@ function CreateScorer({ onClose }: { onClose: () => void }) {
               placeholder="answer.text"
             />
           </Field>
-          {type !== 'json_valid' && (
+          {type !== 'json_valid' && !judge && (
             <Field label="Expected field path" hint="Missing fields cannot pass.">
               <input
                 value={expectedPath}
@@ -671,6 +725,25 @@ function BookReviewIcon() {
   return <CheckCheck size={15} />;
 }
 
+function parseChoices(text: string): Record<string, number> {
+  const choices: Record<string, number> = {};
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    const at = line.lastIndexOf('=');
+    const label = line.slice(0, at).trim(),
+      score = Number(line.slice(at + 1));
+    if (at < 1 || !label || !Number.isFinite(score))
+      throw new Error(`Expected label=score, got "${line.trim()}"`);
+    choices[label] = score;
+  }
+  return choices;
+}
+
 function scorerLabel(type: Scorer['type']) {
-  return { exact_match: 'Exact match', contains: 'Contains', json_valid: 'Valid JSON' }[type];
+  return {
+    exact_match: 'Exact match',
+    contains: 'Contains',
+    json_valid: 'Valid JSON',
+    llm_judge: 'Model judge',
+  }[type];
 }

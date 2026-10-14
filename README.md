@@ -43,7 +43,8 @@ Then open **http://127.0.0.1:4310**.
 - **Dataset curation:** search and filter examples by tag and ground-truth presence, inspect inline, browse immutable version history, import/export JSON, and create cases from reviewed traces with explicitly chosen expectations.
 - **Evaluations:** run real local agent functions or bounded Python processes through the SDK, or run echo/template tasks or a configured model provider, pin dataset revisions, snapshot scorer definitions, repeat trials, bound concurrency, inspect failures, cancel runs, and export results.
 - **Experiment comparison:** choose an explicit baseline and candidate, filter regressions/improvements/mixed changes per metric, compare outputs side by side, and open underlying traces. Coverage and provenance warnings stay visible; missing scores remain missing.
-- **Scorers:** exact match, containment, and JSON validation with optional field paths. The Node SDK also executes custom scorer functions locally.
+- **Scorers:** exact match, containment, JSON validation, and a **model judge** that grades outputs against labels you define, with a per-run token budget. Judge reasons are kept on each case; an over-budget or unparseable judgment is a scorer error, never a pass. The Node SDK also executes custom scorer functions locally.
+- **CI gate:** `GET /api/experiments/:id/gate` and `mindtrust gate` decide pass, fail, not comparable, or incomplete against score floors and a baseline. Only a complete, comparable run can pass.
 - **Prompts and playground:** version prompt text, render input variables, test deterministic templates, and execute real model calls when a provider is configured.
 - **Review:** save judgments, comments, and expected outputs against traces and evaluation cases. Human review does not rewrite automatic scores.
 - **Integrations:** a dependency-free Node.js tracing/evaluation SDK and an OTLP/HTTP **JSON trace** receiver with parent relationships and retry-safe span IDs.
@@ -84,6 +85,23 @@ await client.trace(
 await client.flush();
 ```
 
+Wrap an OpenAI or Anthropic client to record each model call as an `llm` span with its model, output, and token usage, nested under the current trace. Streaming calls are recorded once the stream has been consumed:
+
+```js
+import OpenAI from 'openai';
+import { wrapOpenAI } from './sdk/index.mjs';
+
+const openai = wrapOpenAI(new OpenAI(), client);
+await client.trace('support-agent', async () =>
+  openai.chat.completions.create({
+    model: 'gpt-4.1-mini',
+    messages: [{ role: 'user', content: 'Hi' }],
+  }),
+);
+```
+
+`wrapAnthropic(anthropic, client)` does the same for `messages.create`. Python applications can use the official Braintrust SDK's wrappers through the [compatibility adapter](docs/braintrust-compatibility.md).
+
 `flush()` is explicit: await it before exiting or ending a short-lived request. Failed deliveries retain their batch for retry. Buffer overflow throws; if the task itself also failed, that original error is preserved and `client.lastLoggingError` records the logging failure. The native SDK is Node-only. The server also exposes the separately tested Braintrust compatibility adapter.
 
 Run a complete local SDK evaluation example:
@@ -105,6 +123,17 @@ The native SDK supports case/scorer deadlines, cancellation, subprocess terminat
 [PreMan](https://preman.live) helps you generate and scale tests for agent workflows. You can evaluate their outputs in Verus through its SDK and dataset workflows. The [PreMan agent evaluation example](docs/preman-agent-evals.md) documents the existing runner, setup, and verified scope.
 
 The hosted PreMan integration uses your existing PreMan login and selected workspace. Independent Verus installations use their own local accounts or OIDC unless an operator explicitly enables [PreMan workspace sign-in](docs/preman-shared-login.md).
+
+## Gate a change in CI
+
+After an evaluation, fail the build when the run is worse than its baseline or below a floor:
+
+```sh
+MINDTRUST_URL=https://verus.example.com MINDTRUST_API_KEY=... \
+  node sdk/cli.mjs gate <experimentId> --baseline <baselineId> --min-score "Exact match=0.9"
+```
+
+It exits `0` (pass), `1` (fail), `2` (incomplete, or not comparable with the baseline) or `3` (no decision could be reached). Add `--json` for the full decision. From code, use `client.gate(experimentId, { baselineId, minScores })`.
 
 ## Real model calls
 

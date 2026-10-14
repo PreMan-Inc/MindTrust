@@ -88,7 +88,7 @@ export interface Scorer {
   id: string;
   projectId: string;
   name: string;
-  type: 'exact_match' | 'contains' | 'json_valid';
+  type: 'exact_match' | 'contains' | 'json_valid' | 'llm_judge';
   config: Meta;
   description: string;
   createdAt: string;
@@ -145,6 +145,10 @@ export interface EvalCase {
   output: Json;
   scores: Record<string, number | null>;
   scoreErrors: Record<string, string>;
+  /** Judge reasons, keyed like scores. */
+  scoreExplanations?: Record<string, string>;
+  /** Judge token usage, keyed like scores; separate from the task's own tokens. */
+  scoreUsage?: Record<string, { inputTokens: number; outputTokens: number }>;
   error: string | null;
   latencyMs: number;
   costUsd: number | null;
@@ -172,6 +176,22 @@ export interface Comparison {
   deltas: Record<string, number | null>;
   comparable: boolean;
   warning: string | null;
+  /** Rows where any matched score dropped. */
+  regressions?: number;
+  /** Rows where a matched score rose and none dropped. */
+  improvements?: number;
+}
+export interface GateResult {
+  decision: 'pass' | 'fail' | 'not_comparable' | 'incomplete';
+  reasons: string[];
+  experimentId: string;
+  comparison: {
+    baselineId: string;
+    comparable: boolean;
+    regressions: number;
+    improvements: number;
+    deltas: Record<string, number | null>;
+  } | null;
 }
 export interface Overview {
   traceCount: number;

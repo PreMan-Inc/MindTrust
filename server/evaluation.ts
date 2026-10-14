@@ -66,6 +66,214 @@ export interface Provider {
   baseUrl: string;
   apiKey?: string;
 }
+interface ChatRequest {
+  model: string;
+  messages: { role: string; content: string }[];
+  temperature?: number;
+  maxTokens: number;
+}
+interface ChatCompletion {
+  content: string;
+  inputTokens: number;
+  outputTokens: number;
+  usageReported: boolean;
+}
+export async function chatCompletion(
+  provider: Provider,
+  request: ChatRequest,
+  signal?: AbortSignal,
+): Promise<ChatCompletion> {
+  if (!provider.apiKey)
+    throw new HttpError(503, 'No model provider configured. Set OPENAI_API_KEY on the server.');
+  const timeout = AbortSignal.timeout(30000);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  let response: Response;
+  try {
+    response = await fetch(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+      body: JSON.stringify({
+        model: request.model,
+        messages: request.messages,
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+        max_tokens: request.maxTokens,
+      }),
+      signal: combined,
+    });
+  } catch {
+    if (signal?.aborted) throw new Error('Run cancelled');
+    if (timeout.aborted) throw new Error('Model provider timed out after 30 seconds');
+    throw new Error('Unable to connect to model provider');
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new HttpError(502, `Model provider returned HTTP ${response.status}`);
+  }
+  // Bound provider responses independently of the public request body limit.
+  const reader = response.body?.getReader();
+  let text = '';
+  let size = 0;
+  if (reader) {
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 2 * 1024 * 1024) {
+        await reader.cancel();
+        throw new Error('Model provider response exceeded 2 MB');
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new Error('Model provider returned invalid JSON');
+  }
+  if (!payload || typeof payload !== 'object')
+    throw new Error('Model provider returned an invalid response');
+  const data = payload as {
+    choices?: { message?: { content?: unknown } }[];
+    usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+  };
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== 'string')
+    throw new Error('Model provider response has no text completion');
+  const validToken = (n: unknown) =>
+    typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const inputTokens = validToken(data.usage?.prompt_tokens),
+    outputTokens = validToken(data.usage?.completion_tokens);
+  return {
+    content,
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    usageReported: inputTokens !== null && outputTokens !== null,
+  };
+}
+
+const JUDGE_SYSTEM = (labels: string[]) =>
+  `You are grading an AI system's output. Answer with exactly one of these labels on the first line: ${labels.join(', ')}. Then give a one-sentence reason on the second line.`;
+const JUDGE_FIELD_LIMIT = 20000;
+export const DEFAULT_JUDGE_MAX_TOKENS = 256;
+export const DEFAULT_JUDGE_TOKENS_PER_RUN = 100000;
+
+export function judgeUsesExpected(scorer: Scorer): boolean {
+  return /\{\{\s*expected\s*\}\}/.test(String(scorer.config.prompt ?? ''));
+}
+function judgePrompt(template: string, input: Json, output: Json, expected: Json): string {
+  const field = (value: Json) => printable(value).slice(0, JUDGE_FIELD_LIMIT);
+  return template.replace(/\{\{\s*(input|output|expected)\s*\}\}/g, (_, name: string) =>
+    field(name === 'input' ? input : name === 'output' ? output : expected),
+  );
+}
+/** A deliberate overestimate (3 characters per token), used only to reserve budget. */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3) + 16;
+}
+
+/**
+ * Judge tokens one experiment may spend per scorer. A call reserves its worst
+ * case before it is made and settles to reported usage afterwards, so
+ * concurrent cases cannot overspend. Seeded from persisted cases on resume.
+ */
+export class JudgeBudget {
+  private spent = new Map<string, number>();
+  constructor(cases: EvalCase[] = []) {
+    for (const c of cases)
+      for (const [id, usage] of Object.entries(c.scoreUsage ?? {}))
+        this.spent.set(id, (this.spent.get(id) ?? 0) + usage.inputTokens + usage.outputTokens);
+  }
+  reserve(scorerId: string, limit: number, tokens: number): boolean {
+    const current = this.spent.get(scorerId) ?? 0;
+    if (current + tokens > limit) return false;
+    this.spent.set(scorerId, current + tokens);
+    return true;
+  }
+  settle(scorerId: string, reserved: number, actual: number) {
+    this.spent.set(scorerId, Math.max(0, (this.spent.get(scorerId) ?? 0) - reserved + actual));
+  }
+}
+
+export interface JudgeOutcome {
+  score: number | null;
+  error: string | null;
+  explanation: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+}
+export async function judgeOutput(
+  scorer: Scorer,
+  input: Json,
+  output: Json,
+  expected: Json,
+  provider: Provider,
+  budget: JudgeBudget,
+  signal?: AbortSignal,
+): Promise<JudgeOutcome> {
+  const config = scorer.config as {
+    model: string;
+    prompt: string;
+    choices: Record<string, number>;
+    maxTokens?: number;
+    maxTokensPerRun?: number;
+  };
+  const actual = selected(output, scorer.config.outputPath);
+  if (actual === undefined)
+    return { score: 0, error: null, explanation: 'Output field is missing', usage: null };
+  const labels = Object.keys(config.choices);
+  const system = JUDGE_SYSTEM(labels);
+  const prompt = judgePrompt(config.prompt, input, actual as Json, expected);
+  const maxTokens = config.maxTokens ?? DEFAULT_JUDGE_MAX_TOKENS;
+  const reserved = estimateTokens(system + prompt) + maxTokens;
+  const limit = config.maxTokensPerRun ?? DEFAULT_JUDGE_TOKENS_PER_RUN;
+  if (!budget.reserve(scorer.id, limit, reserved))
+    return {
+      score: null,
+      error: `Judge token budget for this run (${limit}) is exhausted`,
+      explanation: null,
+      usage: null,
+    };
+  let spent = reserved;
+  try {
+    const completion = await chatCompletion(
+      provider,
+      {
+        model: config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0,
+        maxTokens,
+      },
+      signal,
+    );
+    if (completion.usageReported) spent = completion.inputTokens + completion.outputTokens;
+    const usage = { inputTokens: completion.inputTokens, outputTokens: completion.outputTokens };
+    const [first = '', ...rest] = completion.content.trim().split('\n');
+    const answer = first.trim().replace(/^[*_`"'\s]+|[*_`"'.:\s]+$/g, '');
+    const label =
+      labels.find((l) => l === answer) ??
+      labels.find((l) => l.toLowerCase() === answer.toLowerCase());
+    if (label === undefined)
+      return {
+        score: null,
+        error: `Judge answered ${JSON.stringify(first.slice(0, 80))}, not one of ${labels.join(', ')}`,
+        explanation: null,
+        usage,
+      };
+    return {
+      score: config.choices[label],
+      error: null,
+      explanation: (rest.join('\n').trim() || label).slice(0, 2000),
+      usage,
+    };
+  } finally {
+    budget.settle(scorer.id, reserved, spent);
+  }
+}
 export interface TaskResult {
   output: Json;
   latencyMs: number;
@@ -89,76 +297,25 @@ export async function executeTask(
   if (task.type === 'echo') output = input;
   else if (task.type === 'template') output = renderTemplate(task.template ?? '', input);
   else {
-    if (!provider.apiKey)
-      throw new HttpError(503, 'No model provider configured. Set OPENAI_API_KEY on the server.');
-    const timeout = AbortSignal.timeout(30000);
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    let response: Response;
-    try {
-      response = await fetch(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
-        body: JSON.stringify({
-          model: task.model ?? 'gpt-4.1-mini',
-          messages: [
-            ...(task.system ? [{ role: 'system', content: task.system }] : []),
-            {
-              role: 'user',
-              content: task.template ? renderTemplate(task.template, input) : printable(input),
-            },
-          ],
-          ...(task.temperature !== undefined ? { temperature: task.temperature } : {}),
-          max_tokens: task.maxTokens ?? 1024,
-        }),
-        signal: combined,
-      });
-    } catch (error) {
-      if (signal?.aborted) throw new Error('Run cancelled');
-      if (timeout.aborted) throw new Error('Model provider timed out after 30 seconds');
-      throw new Error('Unable to connect to model provider');
-    }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new HttpError(502, `Model provider returned HTTP ${response.status}`);
-    }
-    // Bound provider responses independently of the public request body limit.
-    const reader = response.body?.getReader();
-    let text = '';
-    let size = 0;
-    if (reader) {
-      const decoder = new TextDecoder();
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 2 * 1024 * 1024) {
-          await reader.cancel();
-          throw new Error('Model provider response exceeded 2 MB');
-        }
-        text += decoder.decode(value, { stream: true });
-      }
-      text += decoder.decode();
-    }
-    let payload: unknown;
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      throw new Error('Model provider returned invalid JSON');
-    }
-    if (!payload || typeof payload !== 'object')
-      throw new Error('Model provider returned an invalid response');
-    const data = payload as {
-      choices?: { message?: { content?: unknown } }[];
-      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
-    };
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string')
-      throw new Error('Model provider response has no text completion');
-    output = content;
-    const validToken = (n: unknown) =>
-      typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : 0;
-    inputTokens = validToken(data.usage?.prompt_tokens);
-    outputTokens = validToken(data.usage?.completion_tokens);
+    const completion = await chatCompletion(
+      provider,
+      {
+        model: task.model ?? 'gpt-4.1-mini',
+        messages: [
+          ...(task.system ? [{ role: 'system', content: task.system }] : []),
+          {
+            role: 'user',
+            content: task.template ? renderTemplate(task.template, input) : printable(input),
+          },
+        ],
+        temperature: task.temperature,
+        maxTokens: task.maxTokens ?? 1024,
+      },
+      signal,
+    );
+    output = completion.content;
+    inputTokens = completion.inputTokens;
+    outputTokens = completion.outputTokens;
   }
   return {
     output,
@@ -351,6 +508,7 @@ export class EvaluationQueue {
     this.store.put('experiment', experiment, experiment.projectId);
     const previousCases = this.store.list<EvalCase>('case', undefined, id);
     const existing = new Set(previousCases.map((c) => `${c.rowId}:${c.trial}`));
+    const budget = new JudgeBudget(previousCases);
     const scoreTotals = new Map<string, { sum: number; count: number }>();
     let completedCount = 0,
       latencySum = 0,
@@ -426,8 +584,35 @@ export class EvaluationQueue {
             );
             Object.assign(c, result);
             for (const scorer of snapshot.scorers) {
-              if (item.row.hasExpected === false && scorer.type !== 'json_valid') {
+              const needsExpected =
+                scorer.type === 'llm_judge'
+                  ? judgeUsesExpected(scorer)
+                  : scorer.type !== 'json_valid';
+              if (item.row.hasExpected === false && needsExpected) {
                 c.scoreErrors[scorer.id] = 'Dataset row has no expected value';
+                continue;
+              }
+              if (scorer.type === 'llm_judge') {
+                try {
+                  const judged = await judgeOutput(
+                    scorer,
+                    item.row.input,
+                    result.output,
+                    item.row.expected,
+                    this.provider,
+                    budget,
+                    controller.signal,
+                  );
+                  c.scores[scorer.id] = judged.score;
+                  if (judged.error) c.scoreErrors[scorer.id] = judged.error;
+                  if (judged.explanation)
+                    (c.scoreExplanations ??= {})[scorer.id] = judged.explanation;
+                  if (judged.usage) (c.scoreUsage ??= {})[scorer.id] = judged.usage;
+                } catch (error) {
+                  if (controller.signal.aborted || this.closing) throw error;
+                  c.scoreErrors[scorer.id] =
+                    error instanceof Error ? `Judge failed: ${error.message}` : 'Judge failed';
+                }
                 continue;
               }
               try {
